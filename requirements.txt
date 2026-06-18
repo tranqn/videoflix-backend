@@ -1,0 +1,24 @@
+# Web framework & REST API
+Django==5.2.6
+djangorestframework==3.16.0
+djangorestframework-simplejwt==5.5.1
+django-cors-headers==4.9.0
+python-dotenv==1.2.2
+
+# Database (PostgreSQL)
+# psycopg2 is built from source; backend.Dockerfile ships the matching
+# build deps (gcc, musl-dev, postgresql-dev) on Alpine, so the binary wheel
+# (psycopg2-binary, built for glibc) is intentionally avoided.
+psycopg2==2.9.10
+
+# Background tasks & cache (Redis)
+# django-rq runs the HLS transcoding jobs (the entrypoint starts the worker);
+# django-redis backs Django's cache framework.
+django-rq==3.0.1
+django-redis==5.4.0
+redis==5.2.1
+
+# Production serving
+# gunicorn is the WSGI server; whitenoise serves the collected static assets.
+gunicorn==23.0.0
+whitenoise==6.9.0
