@@ -1,0 +1,25 @@
+# Single-origin reverse proxy for the Videoflix production stack.
+#
+# Caddy terminates TLS (automatic Let's Encrypt) and serves everything under one
+# origin, so the HttpOnly auth cookies are first-party — no CORS / SameSite=None
+# juggling. The Django backend paths are proxied to Gunicorn; every other path
+# is served from the static Vanilla-JS frontend (mounted as a sibling repo).
+#
+# SITE_ADDRESS is injected from .env (your domain or the <ip>.sslip.io host).
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Backend: API, admin, DRF/admin static, uploaded media, RQ dashboard.
+	@backend path /api/* /admin/* /static/* /media/* /django-rq/*
+	handle @backend {
+		reverse_proxy web:8000
+	}
+
+	# Everything else: the static frontend (SPA-style fallback to index.html).
+	handle {
+		root * /srv/frontend
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+}

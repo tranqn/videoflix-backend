@@ -1,0 +1,113 @@
+# Production stack for the Videoflix backend + its (forked) frontend.
+#
+# Caddy (automatic HTTPS) serves the static frontend and reverse-proxies the API
+# to Gunicorn — all behind ONE origin, so the HttpOnly JWT cookies are
+# first-party. Heavy HLS transcoding runs in a dedicated `worker` service so a
+# long FFmpeg job never blocks web requests.
+#
+#   git clone <backend>          # this repo
+#   git clone <frontend> ../frontend   # the forked Vanilla-JS frontend, as a sibling
+#   cp .env.template .env        # set SECRET_KEY, DEBUG=False, hosts, DB_*, SITE_ADDRESS, EMAIL_*
+#   docker compose -f compose.prod.yml up -d --build
+#
+# App:   https://<SITE_ADDRESS>/
+# Admin: https://<SITE_ADDRESS>/admin/
+#
+# The dev docker-compose.yml stays the local-development path and is untouched.
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: videoflix_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"            # HTTP/3
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS to your domain/sslip.io host in .env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../frontend:/srv/frontend:ro   # the forked frontend, cloned as a sibling
+      - caddy_data:/data              # certificates (persist across restarts)
+      - caddy_config:/config
+    depends_on:
+      - web
+
+  db:
+    image: postgres:17-alpine
+    container_name: videoflix_database
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: videoflix_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
+    image: videoflix-backend:prod
+    container_name: videoflix_backend
+    restart: unless-stopped
+    env_file: .env
+    entrypoint: ["./backend.entrypoint.prod.sh"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Lower to 2 on a 1 GB VM (e2-micro). Default 3 suits e2-small upwards.
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-3}
+    volumes:
+      - videoflix_media:/app/media
+      - videoflix_static:/app/static
+    expose:
+      - "8000"                   # reached only via Caddy, not published to the host
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: videoflix-backend:prod
+    container_name: videoflix_worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python manage.py rqworker default
+    volumes:
+      - videoflix_media:/app/media   # reads source videos, writes HLS output
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started    # ensures the image is built first
+
+volumes:
+  postgres_data:
+  redis_data:
+  videoflix_media:
+  videoflix_static:
+  caddy_data:
+  caddy_config:
