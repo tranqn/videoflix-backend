@@ -1,0 +1,7 @@
+# The container entrypoint must keep LF line endings or it will not run
+# (see the Docker setup README). Enforce LF for shell scripts and the Docker
+# setup files so a checkout never corrupts them, regardless of platform.
+*.sh             text eol=lf
+backend.entrypoint.sh text eol=lf
+backend.Dockerfile    text eol=lf
+docker-compose.yml    text eol=lf
