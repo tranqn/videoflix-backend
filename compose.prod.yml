@@ -93,7 +93,12 @@ services:
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
-    command: python manage.py rqworker default
+    # The image's ENTRYPOINT is the DA dev script (backend.entrypoint.sh), which
+    # ignores its arguments — a bare `command:` would still boot gunicorn --reload
+    # here and waste memory. Override the entrypoint so this container runs ONLY
+    # the RQ worker. `web` handles migrations/collectstatic, and depends_on
+    # already waits for a healthy database.
+    entrypoint: ["python", "manage.py", "rqworker", "default"]
     volumes:
       - videoflix_media:/app/media   # reads source videos, writes HLS output
     depends_on:
