@@ -1,4 +1,5 @@
 """FFmpeg helpers and shared constants for the video app."""
+import os
 import subprocess
 from pathlib import Path
 
@@ -8,6 +9,9 @@ from django.conf import settings
 RESOLUTION_HEIGHTS = {'480p': 480, '720p': 720, '1080p': 1080}
 SEGMENT_DURATION = 6
 THUMBNAIL_TIMESTAMP = '00:00:05'
+# On small VMs (e2-small/micro) set FFMPEG_PRESET=ultrafast in .env to halve
+# transcode time at the cost of slightly larger segment files.
+FFMPEG_PRESET = os.environ.get('FFMPEG_PRESET', 'veryfast')
 
 # Cache key for the shared (same for every user) video dashboard list.
 VIDEO_LIST_CACHE_KEY = 'video_list'
@@ -44,7 +48,7 @@ def build_hls_arguments(source_path, height, output_dir):
     return [
         '-i', str(source_path),
         '-vf', f'scale=-2:{height}',
-        '-c:v', 'libx264', '-profile:v', 'main', '-crf', '20', '-preset', 'veryfast',
+        '-c:v', 'libx264', '-profile:v', 'main', '-crf', '20', '-preset', FFMPEG_PRESET,
         '-c:a', 'aac', '-ar', '48000',
         '-hls_time', str(SEGMENT_DURATION),
         '-hls_playlist_type', 'vod',
