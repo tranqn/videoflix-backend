@@ -38,10 +38,17 @@ else:
 EOF
 
 # No --reload in production. Worker count via GUNICORN_WORKERS (default 3;
-# lower to 2 on a 1 GB VM). --timeout raised so long HLS responses don't get cut.
+# lower to 2 on a small VM). Threaded (gthread) workers keep the arbiter
+# heartbeat firing while a request runs, so a large upload streamed through
+# Caddy (unbuffered) is not aborted mid-read — with the default sync worker,
+# --timeout is a hard ceiling on the whole request, including the slow body
+# read, and large uploads 500 at exactly that many seconds. --timeout=120 now
+# only reaps a genuinely stuck worker. Transcoding runs async in the RQ worker.
 exec gunicorn core.wsgi:application \
   --bind 0.0.0.0:8000 \
   --workers "${GUNICORN_WORKERS:-3}" \
+  --worker-class gthread \
+  --threads 4 \
   --timeout 120 \
   --access-logfile - \
   --error-logfile -
