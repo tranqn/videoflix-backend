@@ -73,7 +73,7 @@ services:
     entrypoint: ["./backend.entrypoint.prod.sh"]
     environment:
       - PYTHONUNBUFFERED=1
-      # Lower to 2 on a 1 GB VM (e2-micro). Default 3 suits e2-small upwards.
+      # Lower to 2 on low-memory hosts; the default of 3 suits most machines.
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-3}
     volumes:
       - videoflix_media:/app/media

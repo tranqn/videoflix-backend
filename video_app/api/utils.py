@@ -9,8 +9,8 @@ from django.conf import settings
 RESOLUTION_HEIGHTS = {'480p': 480, '720p': 720, '1080p': 1080}
 SEGMENT_DURATION = 6
 THUMBNAIL_TIMESTAMP = '00:00:05'
-# On small VMs (e2-small/micro) set FFMPEG_PRESET=ultrafast in .env to halve
-# transcode time at the cost of slightly larger segment files.
+# On small hosts set FFMPEG_PRESET=ultrafast in .env to halve transcode
+# time at the cost of slightly larger segment files.
 FFMPEG_PRESET = os.environ.get('FFMPEG_PRESET', 'veryfast')
 
 # Cache key for the shared (same for every user) video dashboard list.

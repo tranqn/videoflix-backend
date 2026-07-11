@@ -18,8 +18,9 @@ def enqueue_video_processing(sender, instance, created, **kwargs):
     cache.delete(VIDEO_LIST_CACHE_KEY)
     if created:
         transaction.on_commit(
-            # 24h ceiling: long HLS batches run overnight on e2-small. Large finite,
-            # not -1/infinite — the single worker must self-heal if a job ever hangs.
+            # 24h ceiling: long HLS batches can run overnight on modest hardware.
+            # Large finite, not -1/infinite — the single worker must self-heal if
+            # a job ever hangs.
             lambda: django_rq.enqueue(process_video, instance.id, job_timeout=86400)
         )
 
