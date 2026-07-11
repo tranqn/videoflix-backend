@@ -25,7 +25,8 @@ def hls_root(video_id):
 
 def run_ffmpeg(arguments):
     """Run ffmpeg with the given arguments, raising on a non-zero exit."""
-    subprocess.run(['ffmpeg', '-y', *arguments], check=True, capture_output=True)
+    subprocess.run(['ffmpeg', '-y', *arguments],
+                   check=True, capture_output=True)
 
 
 def generate_thumbnail(source_path, destination_path):
@@ -40,7 +41,8 @@ def generate_thumbnail(source_path, destination_path):
 def transcode_to_hls(source_path, resolution, output_dir):
     """Transcode the source into an HLS rendition at the given resolution."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(build_hls_arguments(source_path, RESOLUTION_HEIGHTS[resolution], output_dir))
+    run_ffmpeg(build_hls_arguments(
+        source_path, RESOLUTION_HEIGHTS[resolution], output_dir))
 
 
 def build_hls_arguments(source_path, height, output_dir):
