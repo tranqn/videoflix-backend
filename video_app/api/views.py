@@ -41,6 +41,21 @@ class VideoListView(APIView):
         return serializer.data
 
 
+class HLSMasterView(APIView):
+    """Serve the master HLS playlist that lists every rendition of a video."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, movie_id):
+        """Return the master.m3u8, or 404 if it has not been built yet."""
+        master = hls_root(movie_id) / 'master.m3u8'
+        if not master.is_file():
+            raise Http404
+        return FileResponse(
+            open(master, 'rb'), content_type='application/vnd.apple.mpegurl'
+        )
+
+
 class HLSManifestView(APIView):
     """Serve the HLS playlist (index.m3u8) for a video and resolution."""
 

@@ -5,6 +5,7 @@ from django.conf import settings
 
 from .api.utils import (
     RESOLUTION_HEIGHTS,
+    build_master_playlist,
     generate_thumbnail,
     hls_root,
     transcode_to_hls,
@@ -19,6 +20,7 @@ def process_video(video_id):
     try:
         build_thumbnail(video)
         build_renditions(video)
+        build_master_playlist(video.id)
     except Exception:
         set_status(video, Video.Status.FAILED)
         raise

@@ -1,6 +1,7 @@
 """Tests for the video processing task (ffmpeg is mocked)."""
 import shutil
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -41,3 +42,13 @@ class ProcessVideoTests(TestCase):
             tasks.process_video(video.id)
         video.refresh_from_db()
         self.assertEqual(video.status, Video.Status.FAILED)
+
+    @patch('video_app.api.utils.run_ffmpeg')
+    def test_process_video_writes_master_playlist(self, _ffmpeg):
+        video = self.create_video()
+        tasks.process_video(video.id)
+        master = Path(MEDIA) / 'hls' / str(video.id) / 'master.m3u8'
+        self.assertTrue(master.is_file())
+        content = master.read_text()
+        self.assertIn('#EXT-X-STREAM-INF', content)
+        self.assertIn('480p/index.m3u8', content)
