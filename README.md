@@ -14,14 +14,19 @@ the REST API and authenticates via JWTs stored in HttpOnly cookies.
 
 ## Tech stack
 
-- **Django 5 / Django REST Framework** — REST API
-- **PostgreSQL** — database
-- **Redis** — cache layer and Django-RQ broker
-- **Django-RQ** — background jobs (HLS transcoding, e-mail delivery)
-- **FFmpeg** — thumbnail generation and HLS transcoding
-- **SimpleJWT** — JWT auth delivered as HttpOnly cookies
-- **Gunicorn + WhiteNoise** — production serving
-- **Docker / docker-compose** — fully containerised setup
+- **Django 5 / Django REST Framework**: REST API
+- **PostgreSQL**: database
+- **Redis**: cache layer and Django-RQ broker
+- **Django-RQ**: background jobs on two queues: `default` for e-mail,
+  `media` for HLS transcoding, each with its own worker in production so a
+  long transcode never delays an activation e-mail
+- **FFmpeg**: thumbnail generation and HLS transcoding
+- **SimpleJWT**: JWT auth delivered as HttpOnly cookies
+- **Gunicorn + WhiteNoise**: production serving
+- **Caddy**: production only: automatic HTTPS, and serves HLS playlists/segments
+  directly off the media volume, asking Django only for authorization (see
+  [HLS delivery](#hls-delivery-dev-vs-production) below)
+- **Docker / docker-compose**: fully containerised setup
 
 ## Prerequisites
 
@@ -50,6 +55,20 @@ migrations and creates the admin superuser automatically from the
 - **Admin:** <http://127.0.0.1:8000/admin/>
 - **Background jobs dashboard:** <http://127.0.0.1:8000/django-rq/>
 
+## Contributing
+
+Install the dev tooling and arm the git hooks once per clone (cloning alone
+does not do it):
+
+```bash
+pip install -r requirements-dev.txt
+lefthook install
+```
+
+`lefthook.yml` then runs `ruff format` + `ruff check --fix` on staged files
+before each commit, checks the commit message is a Conventional Commit, and
+runs `mypy` + `pytest` before each push.
+
 ## Adding videos
 
 1. Open the admin and add a **Video** (title, description, category) with a
@@ -63,7 +82,7 @@ migrations and creates the admin superuser automatically from the
 
 The frontend (the sibling `../frontend/` repository) expects the API at
 `http://127.0.0.1:8000/api/`. Serve it on **`http://127.0.0.1:5500`** (e.g. the
-VS Code *Live Server* extension pointed at `../frontend/`) — use `127.0.0.1`, not
+VS Code *Live Server* extension pointed at `../frontend/`), use `127.0.0.1`, not
 `localhost`, so the auth cookies set by the API are sent back.
 `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` already allow that origin.
 
@@ -81,14 +100,62 @@ VS Code *Live Server* extension pointed at `../frontend/`) — use `127.0.0.1`, 
 | GET  | `/api/video/` | List all ready videos (newest first) |
 | GET  | `/api/video/<id>/<resolution>/index.m3u8` | HLS playlist for a resolution |
 | GET  | `/api/video/<id>/<resolution>/<segment>` | HLS `.ts` segment |
+| GET  | `/api/health/` | Health check: database, cache, media-queue worker (no auth) |
 
 All `/api/video/` endpoints require authentication.
 
+## HLS delivery: dev vs. production
+
+The two HLS routes above resolve identically from the client's point of view,
+but a different process actually serves the bytes:
+
+- **Development** (`docker-compose.yml`, no Caddy): the Django views above
+  serve both the playlist and the segments directly, exactly as before.
+- **Production** (`compose.prod.yml`, behind Caddy): Caddy serves playlists and
+  segments straight off the shared media volume and never wakes Gunicorn for
+  the payload. It still asks Django to authorize each request first, via a
+  `forward_auth` subrequest to `/internal/hls-auth/` (see `core/views.py` and
+  `caddy/Caddyfile`) that carries the original request's cookies; a 2xx lets
+  Caddy serve the file, anything else is returned to the client verbatim. This
+  keeps a 6-second segment fetch from ever costing a Gunicorn worker.
+
 ## Running the tests
 
+`pytest` is canonical (config lives in `pyproject.toml`); it finds 163 tests.
+`python manage.py test` also runs, but Django's unittest loader does not
+discover this project's plain-class pytest tests and only finds around 146 of
+them, so it is not a substitute for a real run.
+
+Set up a local virtualenv once:
+
 ```bash
-docker-compose exec web python manage.py test
+python -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
 ```
 
-The test suite uses an in-memory SQLite database, a local-memory cache and
-synchronous jobs, so it needs no external services.
+Then run the suite:
+
+```bash
+.venv/bin/pytest
+```
+
+A subset of tests is marked `ffmpeg`: real end-to-end tests that shell out to
+`ffmpeg`/`ffprobe` to prove the on-disk HLS layout the streaming views and
+Caddy depend on. Install ffmpeg (e.g. `brew install ffmpeg`) to run them; if
+it is not on `PATH`, deselect them instead of getting silent gaps:
+
+```bash
+.venv/bin/pytest -m "not ffmpeg"
+```
+
+The suite uses an in-memory SQLite database, a local-memory cache and
+synchronous jobs, so it needs no external services (Postgres, Redis) beyond
+what pip installs.
+
+## Deployment
+
+Production deploys go through CI (image build + push to GHCR) and the
+umbrella repo's dispatch, never a manual `docker compose up` against
+`compose.prod.yml`. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the
+full flow, how to deploy a specific commit, what `deploy.sh`'s exit codes
+mean, and how to roll back.
