@@ -7,7 +7,7 @@ from django.contrib import admin
 from django.urls import URLPattern, URLResolver, include, path, re_path
 from django.views.static import serve
 
-from core.views import HealthView
+from core.views import HealthView, HLSAuthView
 
 # Annotated because the list starts out holding only URLResolvers (every entry
 # is an include()); without it mypy locks the element type in and rejects the
@@ -16,6 +16,11 @@ urlpatterns: list[URLPattern | URLResolver] = [
     path('admin/', admin.site.urls),
     path('django-rq/', include('django_rq.urls')),
     path('api/health/', HealthView.as_view(), name='health'),
+    # Caddy's forward_auth hook for the HLS offload. Deliberately NOT under
+    # /api/: the Caddyfile proxies /api/* to Gunicorn, so anything there is
+    # publicly reachable, while /internal/* falls through to the frontend
+    # handler and this route is only reachable in-cluster as web:8000.
+    path('internal/hls-auth/', HLSAuthView.as_view(), name='hls-auth'),
     path('api/', include('auth_app.api.urls')),
     path('api/', include('video_app.api.urls')),
 ]

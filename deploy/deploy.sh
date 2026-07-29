@@ -203,9 +203,52 @@ except Exception:
 PY
 }
 
-expect_status() {  # expect_status <path> <expected-code> <what it proves>
-  local path="$1" want="$2" why="$3" got
-  got="$(probe "$path")"
+# Same idea, but through CADDY instead of Gunicorn. The HLS paths are authorized
+# by forward_auth in the proxy now and the bytes never reach Django, so probing
+# web:8000 for them would exercise the Django fallback view and say nothing
+# about whether the proxy fails open. This has to go in at the edge.
+#
+# Raw socket + TLS rather than urllib: the certificate is issued for
+# SITE_ADDRESS, but the name that resolves inside the compose network is
+# `caddy`. Connecting to `caddy` while sending SITE_ADDRESS as both SNI and
+# Host is the only way to reach the right vhost without leaving the box (a
+# request to the public name would hairpin out through DNS). Verification is off
+# on purpose: this asserts a status code, not the PKI — Caddy's own cert
+# lifecycle is not what is under test here, and a rollback triggered by a
+# renewal blip would be worse than no assertion.
+probe_edge() {
+  docker exec -i -e PROBE_HOST="$SITE_ADDRESS" -e PROBE_PATH="$1" "$WEB_CONTAINER" \
+    python - <<'PY' 2>/dev/null || true
+import os
+import socket
+import ssl
+import sys
+
+host = os.environ['PROBE_HOST'].split(':')[0]
+path = os.environ['PROBE_PATH']
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+context.check_hostname = False
+context.verify_mode = ssl.CERT_NONE
+try:
+    with socket.create_connection(('caddy', 443), timeout=10) as raw:
+        with context.wrap_socket(raw, server_hostname=host) as tls:
+            tls.sendall(
+                f'GET {path} HTTP/1.1\r\n'
+                f'Host: {host}\r\n'
+                'Connection: close\r\n\r\n'.encode()
+            )
+            status_line = tls.makefile('rb').readline().decode('latin-1')
+    print(status_line.split(' ')[1])
+except Exception:
+    sys.exit(1)
+PY
+}
+
+# expect_status <path> <expected-code> <what it proves> [prober]
+# `prober` defaults to the in-container probe; pass probe_edge to go via Caddy.
+expect_status() {
+  local path="$1" want="$2" why="$3" prober="${4:-probe}" got
+  got="$("$prober" "$path")"
   if [ "$got" != "$want" ]; then
     warn "$path returned '${got:-no response}', expected $want ($why)"
     return 1
@@ -243,7 +286,25 @@ assert_video_requires_auth() {
   expect_status /api/video/ 401 'auth and routing are up, not just the process'
 }
 
-POST_HEALTH_ASSERTIONS=(assert_running_image assert_video_requires_auth)
+assert_hls_denied_at_the_edge() {
+  # The one assertion in this list that does NOT go through Gunicorn. Caddy now
+  # serves HLS off the media volume and only asks Django for a yes/no; if that
+  # subrequest is misconfigured — matcher reordered, /internal/hls-auth/ moved,
+  # handle/route nesting flattened — Caddy fails OPEN and hands the whole
+  # library to anonymous callers, while every Django-side check in this script
+  # still passes and the application log stays clean.
+  #
+  # 401 (not 404) is the expected answer even if video 1 does not exist:
+  # authorization happens before anything looks at the disk.
+  expect_status /api/video/1/master.m3u8 401 \
+    'Caddy forward_auth denies anonymous HLS instead of failing open' probe_edge
+}
+
+POST_HEALTH_ASSERTIONS=(
+  assert_running_image
+  assert_video_requires_auth
+  assert_hls_denied_at_the_edge
+)
 
 wait_for_health() {
   local deadline=$((SECONDS + HEALTH_TIMEOUT))

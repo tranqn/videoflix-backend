@@ -1,4 +1,4 @@
-"""Health check endpoint for container orchestration and monitoring."""
+"""Infrastructure endpoints: the health check and the Caddy authorization hook."""
 
 import django_rq
 from django.core.cache import cache
@@ -8,9 +8,47 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rq.worker import Worker
 
+from auth_app.api.authentication import CookieJWTAuthentication
+from video_app.api.permissions import HLS_STREAM_PERMISSIONS
 from video_app.api.utils import MEDIA_QUEUE_NAME
 
 _CACHE_HEALTH_KEY = 'health:roundtrip'
+
+
+class HLSAuthView(APIView):
+    """Authorize one HLS request on Caddy's behalf; serve no bytes.
+
+    In production Caddy delivers playlists and segments straight off the media
+    volume and never wakes Gunicorn for the payload. It still asks Django
+    whether the caller may have them: a ``forward_auth`` subrequest to this
+    endpoint, carrying the original request's cookies. 2xx lets Caddy serve the
+    file, anything else is returned to the client verbatim.
+
+    Deliberate choices:
+
+    * **Not under /api/.** Caddy's ``@backend`` matcher proxies all of /api/* to
+      Gunicorn, so an endpoint there would be reachable from the internet. Under
+      /internal/ the fallback handler serves the frontend instead, and this view
+      is only reachable in-cluster as ``web:8000``. It is not a security
+      boundary by itself -- it leaks nothing but "your cookie is valid" -- but
+      an unauthenticated endpoint should not be published for no reason.
+    * **204, not 200.** ``forward_auth`` discards the body of a 2xx response.
+      A serialized payload here would be bytes rendered and thrown away on
+      *every single segment* of every stream.
+    * **The permission comes from video_app.api.permissions**, shared with the
+      streaming views, so the proxy path and the direct path cannot drift.
+
+    Failure modes are closed by construction: an expired cookie authenticates as
+    anonymous and gets a 401, and if this process is down or slow Caddy has no
+    2xx to act on and answers 502/504 -- it never falls through to the file.
+    """
+
+    authentication_classes = [CookieJWTAuthentication]
+    permission_classes = HLS_STREAM_PERMISSIONS
+
+    def get(self, request):
+        """Return 204 if the caller may stream; DRF returns 401/403 otherwise."""
+        return Response(status=204)
 
 
 class HealthView(APIView):

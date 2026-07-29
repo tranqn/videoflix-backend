@@ -46,6 +46,17 @@ services:
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ../frontend:/srv/frontend:ro   # the forked frontend, cloned as a sibling
+      # HLS offload: Caddy serves playlists/segments off the media volume
+      # instead of parking a Gunicorn worker on every 6-second segment. Django
+      # still authorizes each request (forward_auth -> /internal/hls-auth/).
+      #
+      # :ro is not decoration. Caddy is the process exposed to the internet;
+      # the workers' transcode output is the thing it reads. Read-only means a
+      # Caddy compromise cannot rewrite a segment other users then play.
+      #
+      # Mounted at /srv/media, but the Caddyfile roots at /srv/media/hls — the
+      # raw uploads in /srv/media/uploads stay outside any document root.
+      - videoflix_media:/srv/media:ro
       - caddy_data:/data              # certificates (persist across restarts)
       - caddy_config:/config
     depends_on:

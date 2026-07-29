@@ -6,18 +6,153 @@
 # is served from the static Vanilla-JS frontend (mounted as a sibling repo).
 #
 # SITE_ADDRESS is injected from .env (your domain or the <ip>.sslip.io host).
+#
+# HLS OFFLOAD. Video bytes do NOT go through Gunicorn. A Gunicorn worker is a
+# whole Python process; parking one on a 6-second .ts segment for the duration
+# of the transfer means a handful of viewers can starve the API. Caddy serves
+# playlists and segments straight off the media volume, and asks Django once per
+# request whether the caller may have them (forward_auth). Public URLs are
+# unchanged — the offload is invisible to the frontend.
 
 {$SITE_ADDRESS} {
 	encode zstd gzip
 
+	# Access log for the offloaded requests. Without it, a forward_auth that
+	# starts failing open is completely silent: Django never sees the request,
+	# so nothing shows up in the application log either, and the only symptom of
+	# "authorization stopped happening" is that nothing goes wrong.
+	#
+	# A named logger in a site block is bound to every request for that host, so
+	# the two non-HLS handlers below carry `log_skip` to keep this stream to the
+	# thing it is meant to make visible. Drop those two lines to get a full
+	# access log instead.
+	log hls {
+		output stdout
+		format json
+	}
+
+	# --- HLS: authorize in Django, serve from disk ---------------------------
+	#
+	# The regexp is the security boundary, so it is written as an exhaustive
+	# whitelist of the three shapes video_app/api/urls.py routes, not as a
+	# prefix match:
+	#
+	#   /api/video/<id>/master.m3u8
+	#   /api/video/<id>/<res>/index.m3u8
+	#   /api/video/<id>/<n>.ts  (under <res>)
+	#
+	# <id> is digits only, <res> is the literal RESOLUTION_HEIGHTS key set
+	# (video_app/api/utils.py) and <n>.ts mirrors SEGMENT_PATTERN
+	# (video_app/api/views.py). Nothing containing a dot-segment, an encoded
+	# slash or any other character can match, so a traversal attempt never
+	# enters this route at all — it falls through to @backend and meets the
+	# same Django guards as before. video_app/tests/test_caddy_hls_contract.py
+	# fails if this list and those two Python constants drift apart.
+	#
+	# /api/video/ (the JSON dashboard list) does not match — no <id> — and
+	# still reaches Django.
+	@hls path_regexp hls ^/api/video/[0-9]+/(?:master\.m3u8|(?:480p|720p|1080p)/(?:index\.m3u8|[0-9]+\.ts))$
+	@hls_playlist path *.m3u8
+	@hls_segment path *.ts
+
+	# BOTH keywords are load-bearing; neither alone works. Verify any change to
+	# this nesting with `caddy adapt --pretty`, not by reading it.
+	#
+	#   handle — because Caddy sorts top-level directives by its own order, in
+	#     which `handle` comes BEFORE `route`. A top-level `route @hls` written
+	#     above `handle @backend` is still emitted after it, @backend's /api/*
+	#     matches every HLS URL, and the offload is silently dead — every
+	#     segment goes back through Gunicorn. `handle @hls` joins the same
+	#     mutually-exclusive group as @backend and, being written first, wins.
+	#
+	#   route (inner) — because inside a handle block the directives are sorted
+	#     too, and there `uri` (path rewriting) runs BEFORE `forward_auth`. The
+	#     auth subrequest would then report the *rewritten* path in
+	#     X-Forwarded-Uri, so any future entitlement check in Django would be
+	#     authorizing a path the client never asked for. `route` keeps the
+	#     order written here.
+	handle @hls {
+		route {
+			log_name hls
+
+			# Cookies are forwarded as-is: reverse_proxy passes the incoming request
+			# headers through unchanged, so the HttpOnly access_token cookie reaches
+			# Django. (copy_headers is the other direction — auth response headers
+			# back onto the proxied request — and is not what is needed here.)
+			#
+			# FAIL-CLOSED: only a 2xx from this endpoint continues to file_server.
+			# Every other outcome — 401, 403, a Django 500, and an unreachable or
+			# timed-out web:8000 (Caddy synthesises 502/504) — is returned to the
+			# client and the file is never opened.
+			# Timeouts are deliberate. Without them Caddy waits INDEFINITELY for
+			# this subrequest: a *crashed* Django gives a fast 502, but a *hung*
+			# one (deadlocked worker, exhausted DB pool) parks every streaming
+			# connection until the client gives up, and each parked one holds a
+			# Caddy handler. Measured: web paused, curl still waiting at 25s.
+			# Bounding it turns that into a prompt 504, which is still
+			# fail-closed — no file is served — but releases the connection.
+			# The endpoint verifies a JWT and does one user lookup, so it answers
+			# in single-digit milliseconds; 5s means "something is badly wrong",
+			# not "we are busy".
+			forward_auth web:8000 {
+				uri /internal/hls-auth/
+				transport http {
+					dial_timeout 2s
+					response_header_timeout 5s
+				}
+			}
+
+			# Authorized. Map the public URL onto the on-disk layout:
+			# /api/video/7/480p/000.ts -> /srv/media/hls/7/480p/000.ts
+			uri strip_prefix /api/video
+
+			# root is /srv/media/hls, NOT /srv/media: the raw uploaded source files
+			# live in <media>/uploads/ and must never be inside a document root.
+			# The volume itself is mounted :ro (compose.prod.yml), so a compromised
+			# Caddy cannot write into the media library either.
+			root * /srv/media/hls
+
+			# Mandatory. Go's MIME table knows neither .m3u8 nor .ts, and Caddy's
+			# file_server deliberately refuses to let net/http sniff a type it could
+			# not resolve — the response would ship with NO Content-Type at all and
+			# hls.js would not play it. `defer` applies these after file_server has
+			# decided (or failed to decide) on its own value.
+			header @hls_playlist {
+				Content-Type application/vnd.apple.mpegurl
+				# Playlists are final once transcoding is done, but keep the TTL
+				# short so a re-transcode is picked up without a hard refresh.
+				Cache-Control "private, max-age=60"
+				defer
+			}
+			header @hls_segment {
+				Content-Type video/MP2T
+				# Every segment request costs one forward_auth subrequest — Caddy
+				# does not cache authorization decisions, by design. Segments are
+				# immutable (the name encodes id + rendition + index), so letting
+				# the BROWSER cache them is what keeps the subrequest count down.
+				# `private`: never in a shared cache, these are per-user bytes.
+				Cache-Control "private, max-age=86400, immutable"
+				defer
+			}
+
+			file_server
+		}
+	}
+
 	# Backend: API, admin, DRF/admin static, uploaded media, RQ dashboard.
+	# Everything under /api/* that is not an HLS path — including /api/video/
+	# itself — lands here.
 	@backend path /api/* /admin/* /static/* /media/* /django-rq/*
 	handle @backend {
+		log_skip
 		reverse_proxy web:8000
 	}
 
 	# Everything else: the static frontend (SPA-style fallback to index.html).
+	# /internal/* lands here too, which is the point: the forward_auth hook is
+	# not reachable from the internet.
 	handle {
+		log_skip
 		root * /srv/frontend
 		try_files {path} {path}/ /index.html
 		file_server

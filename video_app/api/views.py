@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from video_app.models import Video
 
+from .permissions import HLS_STREAM_PERMISSIONS
 from .serializers import VideoListSerializer
 from .utils import (
     RESOLUTION_HEIGHTS,
@@ -19,6 +20,13 @@ from .utils import (
 )
 
 # Segment file names ffmpeg produces (e.g. 000.ts); blocks path traversal.
+#
+# Mirrored in caddy/Caddyfile: the @hls matcher's regexp ends in `[0-9]+\.ts`
+# and lists the RESOLUTION_HEIGHTS keys literally, because in production Caddy
+# decides which paths it may serve from disk without asking Django. Loosening
+# either pattern without the other creates a shape that one of the two paths
+# serves and the other 404s. video_app/tests/test_caddy_hls_contract.py fails
+# when they drift.
 SEGMENT_PATTERN = re.compile(r'^\d+\.ts$')
 
 
@@ -52,7 +60,7 @@ class VideoListView(APIView):
 class HLSMasterView(APIView):
     """Serve the master HLS playlist that lists every rendition of a video."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = HLS_STREAM_PERMISSIONS
 
     def get(self, request, movie_id):
         """Return the master.m3u8, or 404 if it has not been built yet."""
@@ -65,7 +73,7 @@ class HLSMasterView(APIView):
 class HLSManifestView(APIView):
     """Serve the HLS playlist (index.m3u8) for a video and resolution."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = HLS_STREAM_PERMISSIONS
 
     def get(self, request, movie_id, resolution):
         """Return the m3u8 manifest, or 404 if it does not exist."""
@@ -80,7 +88,7 @@ class HLSManifestView(APIView):
 class HLSSegmentView(APIView):
     """Serve a single HLS segment (.ts) for a video and resolution."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = HLS_STREAM_PERMISSIONS
 
     def get(self, request, movie_id, resolution, segment):
         """Return the requested .ts segment, or 404 if invalid/missing."""
