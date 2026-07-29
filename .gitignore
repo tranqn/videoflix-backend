@@ -18,5 +18,15 @@ db.sqlite3
 # Environment / secrets
 .env
 
+# Test & tooling artefacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+
+# Generated locally, not part of the project
+code-atlas.html
+
 # OS / editor
 .DS_Store
