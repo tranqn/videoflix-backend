@@ -60,6 +60,10 @@ django_settings_module = "core.settings_test"
 
 [tool.bandit]
 # Scan the whole tree rather than naming apps, so a new app is covered the day
-# it is created. Tests are excluded because they trip B101 (assert_used) by
-# design; migrations are generated code we do not hand-audit.
-exclude_dirs = [".venv", "./.venv", "./media", "./static", "./video_app/migrations", "./auth_app/tests", "./video_app/tests"]
+# it is created. Tests are excluded because they trip B101 (assert_used) and
+# B108 (temp dirs) by design; migrations are generated code we do not hand-audit.
+#
+# Matched as glob patterns, NOT as an enumerated list of directories: an earlier
+# version named each tests/ dir explicitly and silently started scanning a test
+# file the moment it moved to a new app.
+exclude_dirs = ["*/.venv/*", "*/tests/*", "*/migrations/*", "*/media/*", "*/static/*"]

@@ -182,7 +182,21 @@ class DeployScriptTests(TestCase):
             repo = self.make_repo(tmp)
             result = self.run_deploy(repo, 'ghcr.io/tranqn/videoflix-backend:abc123')
             self.assertEqual(result.returncode, 2, result.stderr)
-            self.assertIn('docker', result.stderr)
+            # Exit 2 is the Docker stage, so reaching it already proves every
+            # config precondition passed — which is what this test is about.
+            # Which Docker-stage message appears depends on the environment:
+            # without docker on the restricted PATH the script reports it is not
+            # installed, with docker present the pull runs and ghcr.io denies it.
+            # Accept either, and assert no config check was the thing that fired.
+            self.assertTrue(
+                any(
+                    marker in result.stderr
+                    for marker in ('docker is not installed', 'could not pull')
+                ),
+                result.stderr,
+            )
+            for config_error in ('.env not found', 'SECRET_KEY', 'SITE_ADDRESS', 'DB_PASSWORD'):
+                self.assertNotIn(config_error, result.stderr)
 
 
 class DeployScriptSafetyRailTests(TestCase):
