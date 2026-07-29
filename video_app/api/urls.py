@@ -1,4 +1,5 @@
 """URL routes for the video endpoints."""
+
 from django.urls import path
 
 from .views import HLSManifestView, HLSMasterView, HLSSegmentView, VideoListView

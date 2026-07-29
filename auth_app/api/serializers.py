@@ -1,4 +1,5 @@
 """Serializers for registration, login and password reset."""
+
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -36,9 +37,7 @@ class RegistrationSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """Ensure the passwords match and satisfy the strength rules."""
         if data['password'] != data['confirmed_password']:
-            raise serializers.ValidationError(
-                {'confirmed_password': 'The passwords do not match.'}
-            )
+            raise serializers.ValidationError({'confirmed_password': 'The passwords do not match.'})
         check_password_strength(data['password'])
         return data
 
@@ -76,8 +75,6 @@ class PasswordConfirmSerializer(serializers.Serializer):
     def validate(self, data):
         """Ensure both passwords match and satisfy the strength rules."""
         if data['new_password'] != data['confirm_password']:
-            raise serializers.ValidationError(
-                {'confirm_password': 'The passwords do not match.'}
-            )
+            raise serializers.ValidationError({'confirm_password': 'The passwords do not match.'})
         check_password_strength(data['new_password'])
         return data

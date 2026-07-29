@@ -1,4 +1,5 @@
 """Authentication endpoints: register, activate, login, refresh, logout, reset."""
+
 import django_rq
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
@@ -72,9 +73,7 @@ class LoginView(APIView):
 
     def authenticate_user(self, credentials):
         """Return a login response or the appropriate error response."""
-        user = authenticate(
-            username=credentials['email'], password=credentials['password']
-        )
+        user = authenticate(username=credentials['email'], password=credentials['password'])
         if user is not None:
             return build_login_response(user)
         return self.handle_failed_login(credentials)
@@ -87,11 +86,8 @@ class LoginView(APIView):
         return Response({'detail': 'Invalid credentials.'}, status=401)
 
     def is_inactive_match(self, candidate, password):
-        """True if the account exists, is inactive and the password is correct."""
-        return bool(
-            candidate and not candidate.is_active
-            and candidate.check_password(password)
-        )
+        """Return True if the account exists, is inactive and the password is correct."""
+        return bool(candidate and not candidate.is_active and candidate.check_password(password))
 
 
 class CookieTokenRefreshView(TokenRefreshView):
@@ -141,10 +137,13 @@ class LogoutView(APIView):
 
     def build_logout_response(self):
         """Return the logout response with both auth cookies deleted."""
-        response = Response({
-            'detail': 'Logout successful! All tokens will be deleted. '
-                      'Refresh token is now invalid.',
-        }, status=200)
+        response = Response(
+            {
+                'detail': 'Logout successful! All tokens will be deleted. '
+                'Refresh token is now invalid.',
+            },
+            status=200,
+        )
         response.delete_cookie('access_token')
         response.delete_cookie('refresh_token')
         return response
@@ -160,9 +159,7 @@ class PasswordResetView(APIView):
         serializer = PasswordResetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.dispatch_reset_email(serializer.validated_data['email'])
-        return Response(
-            {'detail': 'An email has been sent to reset your password.'}, status=200
-        )
+        return Response({'detail': 'An email has been sent to reset your password.'}, status=200)
 
     def dispatch_reset_email(self, email):
         """Enqueue the reset mail only for an existing active account."""
@@ -184,9 +181,7 @@ class PasswordConfirmView(APIView):
         if user is None or not default_token_generator.check_token(user, token):
             return Response({'detail': 'Invalid or expired reset link.'}, status=400)
         self.store_password(user, serializer.validated_data['new_password'])
-        return Response(
-            {'detail': 'Your Password has been successfully reset.'}, status=200
-        )
+        return Response({'detail': 'Your Password has been successfully reset.'}, status=200)
 
     def store_password(self, user, new_password):
         """Persist the new password hash."""

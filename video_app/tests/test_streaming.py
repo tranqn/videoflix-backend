@@ -1,4 +1,5 @@
 """Tests for HLS manifest and segment streaming."""
+
 import shutil
 import tempfile
 from pathlib import Path
@@ -27,9 +28,7 @@ class StreamingTests(APITestCase):
         self.user = User.objects.create_user(
             username='w@example.com', email='w@example.com', password=VALID_PASSWORD
         )
-        self.video = Video.objects.create(
-            title='m', category='Drama', status=Video.Status.READY
-        )
+        self.video = Video.objects.create(title='m', category='Drama', status=Video.Status.READY)
         self.hls_dir = Path(MEDIA) / 'hls' / str(self.video.id) / '480p'
         self.hls_dir.mkdir(parents=True, exist_ok=True)
         (self.hls_dir / 'index.m3u8').write_text('#EXTM3U\n')

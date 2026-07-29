@@ -1,4 +1,5 @@
 """Tests for registration and account activation."""
+
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
@@ -67,8 +68,10 @@ class ActivationTests(APITestCase):
 
     def setUp(self):
         self.user = User.objects.create_user(
-            username='a@example.com', email='a@example.com',
-            password=VALID_PASSWORD, is_active=False,
+            username='a@example.com',
+            email='a@example.com',
+            password=VALID_PASSWORD,
+            is_active=False,
         )
         self.uidb64 = urlsafe_base64_encode(force_bytes(self.user.pk))
 

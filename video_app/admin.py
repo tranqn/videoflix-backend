@@ -1,4 +1,5 @@
 """Admin configuration for the video app — videos are uploaded here."""
+
 import django_rq
 from django.contrib import admin
 

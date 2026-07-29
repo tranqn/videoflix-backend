@@ -1,4 +1,5 @@
 """Tests for login, logout and token refresh."""
+
 from django.contrib.auth.models import User
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -48,7 +49,8 @@ class SessionTokenTests(APITestCase):
             username='s@example.com', email='s@example.com', password=VALID_PASSWORD
         )
         self.client.post(
-            reverse('login'), {'email': 's@example.com', 'password': VALID_PASSWORD},
+            reverse('login'),
+            {'email': 's@example.com', 'password': VALID_PASSWORD},
             format='json',
         )
         self.refresh_value = self.client.cookies['refresh_token'].value

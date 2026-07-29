@@ -1,0 +1,9 @@
+# Dev/CI tooling layered on top of the runtime dependencies (requirements.txt);
+# install with `pip install -r requirements-dev.txt`.
+-r requirements.txt
+
+ruff==0.16.0
+pytest==8.4.2
+pytest-django==4.12.0
+pytest-cov==7.1.0
+bandit[toml]==1.9.4
