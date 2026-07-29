@@ -1,4 +1,5 @@
 """Database models for the video app."""
+
 from django.db import models
 
 
@@ -18,9 +19,7 @@ class Video(models.Model):
     category = models.CharField(max_length=100)
     video_file = models.FileField(upload_to='uploads/')
     thumbnail = models.FileField(upload_to='thumbnails/', blank=True)
-    status = models.CharField(
-        max_length=20, choices=Status.choices, default=Status.PENDING
-    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

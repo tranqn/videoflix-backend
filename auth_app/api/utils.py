@@ -1,4 +1,5 @@
 """Helper functions for the authentication endpoints."""
+
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
@@ -30,10 +31,13 @@ def set_token_cookie(response, key, token):
 def build_login_response(user):
     """Issue tokens, set the auth cookies and return the user payload."""
     refresh = RefreshToken.for_user(user)
-    response = Response({
-        'detail': 'Login successful',
-        'user': {'id': user.id, 'username': user.username},
-    }, status=200)
+    response = Response(
+        {
+            'detail': 'Login successful',
+            'user': {'id': user.id, 'username': user.username},
+        },
+        status=200,
+    )
     set_token_cookie(response, 'access_token', refresh.access_token)
     set_token_cookie(response, 'refresh_token', refresh)
     return response
@@ -83,8 +87,10 @@ def send_activation_email(user_id):
         ACTIVATION_PATH, encode_uid(user), default_token_generator.make_token(user)
     )
     send_html_email(
-        'Activate your Videoflix account', user.email,
-        'emails/activation.html', {'user': user, 'activation_url': link},
+        'Activate your Videoflix account',
+        user.email,
+        'emails/activation.html',
+        {'user': user, 'activation_url': link},
     )
 
 
@@ -95,6 +101,8 @@ def send_password_reset_email(user_id):
         RESET_PATH, encode_uid(user), default_token_generator.make_token(user)
     )
     send_html_email(
-        'Reset your Videoflix password', user.email,
-        'emails/password_reset.html', {'user': user, 'reset_url': link},
+        'Reset your Videoflix password',
+        user.email,
+        'emails/password_reset.html',
+        {'user': user, 'reset_url': link},
     )

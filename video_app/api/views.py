@@ -1,4 +1,5 @@
 """Video dashboard and HLS streaming endpoints."""
+
 import re
 
 from django.core.cache import cache
@@ -51,9 +52,7 @@ class HLSMasterView(APIView):
         master = hls_root(movie_id) / 'master.m3u8'
         if not master.is_file():
             raise Http404
-        return FileResponse(
-            open(master, 'rb'), content_type='application/vnd.apple.mpegurl'
-        )
+        return FileResponse(open(master, 'rb'), content_type='application/vnd.apple.mpegurl')
 
 
 class HLSManifestView(APIView):
@@ -68,9 +67,7 @@ class HLSManifestView(APIView):
         manifest = hls_root(movie_id) / resolution / 'index.m3u8'
         if not manifest.is_file():
             raise Http404
-        return FileResponse(
-            open(manifest, 'rb'), content_type='application/vnd.apple.mpegurl'
-        )
+        return FileResponse(open(manifest, 'rb'), content_type='application/vnd.apple.mpegurl')
 
 
 class HLSSegmentView(APIView):

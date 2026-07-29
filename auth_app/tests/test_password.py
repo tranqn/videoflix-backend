@@ -1,4 +1,5 @@
 """Tests for the password-reset flow."""
+
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
@@ -53,7 +54,8 @@ class PasswordConfirmTests(APITestCase):
     def test_confirm_sets_new_password(self):
         url = reverse('password_confirm', args=[self.uidb64, self.token])
         response = self.client.post(
-            url, {'new_password': NEW_PASSWORD, 'confirm_password': NEW_PASSWORD},
+            url,
+            {'new_password': NEW_PASSWORD, 'confirm_password': NEW_PASSWORD},
             format='json',
         )
         self.assertEqual(response.status_code, 200)
@@ -63,7 +65,8 @@ class PasswordConfirmTests(APITestCase):
     def test_confirm_rejects_mismatch(self):
         url = reverse('password_confirm', args=[self.uidb64, self.token])
         response = self.client.post(
-            url, {'new_password': NEW_PASSWORD, 'confirm_password': 'Other123!'},
+            url,
+            {'new_password': NEW_PASSWORD, 'confirm_password': 'Other123!'},
             format='json',
         )
         self.assertEqual(response.status_code, 400)
@@ -71,7 +74,8 @@ class PasswordConfirmTests(APITestCase):
     def test_confirm_rejects_invalid_token(self):
         url = reverse('password_confirm', args=[self.uidb64, 'bad-token'])
         response = self.client.post(
-            url, {'new_password': NEW_PASSWORD, 'confirm_password': NEW_PASSWORD},
+            url,
+            {'new_password': NEW_PASSWORD, 'confirm_password': NEW_PASSWORD},
             format='json',
         )
         self.assertEqual(response.status_code, 400)

@@ -1,4 +1,5 @@
 """Tests for the video processing task (ffmpeg is mocked)."""
+
 import shutil
 import tempfile
 from pathlib import Path
