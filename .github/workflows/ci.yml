@@ -39,9 +39,16 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: requirements-dev.txt
-      # psycopg2==2.9.10 builds from source; needs libpq headers.
-      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      # psycopg2==2.9.10 builds from source; needs libpq headers. ffmpeg is not
+      # on the runner image, and without it the HLS end-to-end tests skip
+      # silently -- which is worse than not having them, since they are the only
+      # thing guarding the on-disk layout the streaming views and Caddy depend on.
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev ffmpeg
       - run: pip install -r requirements-dev.txt
+      # The e2e tests skip themselves when ffmpeg is absent, so a failed install
+      # would quietly reduce the suite instead of failing. Check it explicitly.
+      - name: Require ffmpeg (the HLS end-to-end tests skip without it)
+        run: ffmpeg -version | head -1 && ffprobe -version | head -1
       - run: pytest --cov --cov-report=term-missing --cov-report=xml
       - uses: actions/upload-artifact@v7
         if: always()
