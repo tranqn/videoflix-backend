@@ -1,7 +1,10 @@
 services:
 
   db:
-    image: postgres:latest
+    # Pinned to match compose.prod.yml: postgres:latest would eventually pull
+    # a new major version and refuse to start against the existing data
+    # directory (major upgrades need an explicit migration step).
+    image: postgres:17-alpine
     container_name: videoflix_database
     environment:
       POSTGRES_DB: ${DB_NAME}
@@ -11,7 +14,8 @@ services:
       - postgres_data:/var/lib/postgresql
 
   redis:
-    image: redis:latest
+    # Pinned to match compose.prod.yml, for the same reason as postgres above.
+    image: redis:7-alpine
     container_name: videoflix_redis
     volumes:
       - redis_data:/data
@@ -26,7 +30,6 @@ services:
     volumes:
       - .:/app
       - videoflix_media:/app/media
-      - videoflix_static:/app/static
     ports:
       - "8000:8000"
     environment:
@@ -35,11 +38,7 @@ services:
       - db
       - redis
 
-
-
-
 volumes:
   postgres_data:
   redis_data:
   videoflix_media:
-  videoflix_static:

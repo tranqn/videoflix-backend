@@ -1,4 +1,7 @@
-#!/bin/sh
+#!/bin/bash
+# bash (not sh/dash): `wait -n` below needs it to supervise gunicorn + the
+# rqworker without pulling in supervisord. bash is already installed by
+# backend.Dockerfile.
 
 set -e
 
@@ -14,8 +17,12 @@ done
 echo "PostgreSQL ist bereit - fahre fort..."
 
 # Deine originalen Befehle (ohne wait_for_db)
+#
+# No `makemigrations` here: migrations are committed to the repo and
+# reviewed like any other code change. Generating them inside a running
+# container lets two developers' local containers invent divergent,
+# unreviewed migrations for the same model change.
 python manage.py collectstatic --noinput
-python manage.py makemigrations
 python manage.py migrate
 
 # Create a superuser using environment variables
@@ -44,5 +51,15 @@ EOF
 # queue in settings.RQ_QUEUES — an enqueue to a queue nobody consumes never
 # errors, the job just sits there forever.
 python manage.py rqworker default media &
+WORKER_PID=$!
 
-exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --reload
+# gunicorn also runs backgrounded (not `exec`) so `wait -n` below can watch
+# both of them: an unsupervised worker that dies would otherwise leave the
+# container running and healthy while jobs pile up on the queue forever.
+gunicorn core.wsgi:application --bind 0.0.0.0:8000 --reload &
+GUNICORN_PID=$!
+
+# Whichever of the two exits first ends the container with its exit status,
+# so a crashed worker actually stops the container instead of going unnoticed.
+wait -n "$WORKER_PID" "$GUNICORN_PID"
+exit $?
