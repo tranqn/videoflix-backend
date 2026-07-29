@@ -86,7 +86,7 @@ class LoginView(APIView):
         return Response({'detail': 'Invalid credentials.'}, status=401)
 
     def is_inactive_match(self, candidate, password):
-        """True if the account exists, is inactive and the password is correct."""
+        """Return True if the account exists, is inactive and the password is correct."""
         return bool(candidate and not candidate.is_active and candidate.check_password(password))
 
 
