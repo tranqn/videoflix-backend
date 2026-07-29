@@ -1,4 +1,5 @@
 """FFmpeg helpers and shared constants for the video app."""
+
 import os
 import subprocess
 from pathlib import Path
@@ -32,24 +33,31 @@ def hls_root(video_id):
 
 def run_ffmpeg(arguments):
     """Run ffmpeg with the given arguments, raising on a non-zero exit."""
-    subprocess.run(['ffmpeg', '-y', *arguments],
-                   check=True, capture_output=True)
+    subprocess.run(['ffmpeg', '-y', *arguments], check=True, capture_output=True)
 
 
 def generate_thumbnail(source_path, destination_path):
     """Grab a single still frame to use as the video thumbnail."""
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg([
-        '-ss', THUMBNAIL_TIMESTAMP, '-i', str(source_path),
-        '-frames:v', '1', '-q:v', '2', str(destination_path),
-    ])
+    run_ffmpeg(
+        [
+            '-ss',
+            THUMBNAIL_TIMESTAMP,
+            '-i',
+            str(source_path),
+            '-frames:v',
+            '1',
+            '-q:v',
+            '2',
+            str(destination_path),
+        ]
+    )
 
 
 def transcode_to_hls(source_path, resolution, output_dir):
     """Transcode the source into an HLS rendition at the given resolution."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(build_hls_arguments(
-        source_path, RESOLUTION_HEIGHTS[resolution], output_dir))
+    run_ffmpeg(build_hls_arguments(source_path, RESOLUTION_HEIGHTS[resolution], output_dir))
 
 
 def build_master_playlist(video_id):
@@ -67,12 +75,27 @@ def build_master_playlist(video_id):
 def build_hls_arguments(source_path, height, output_dir):
     """Build the ffmpeg argument list for one HLS rendition."""
     return [
-        '-i', str(source_path),
-        '-vf', f'scale=-2:{height}',
-        '-c:v', 'libx264', '-profile:v', 'main', '-crf', '20', '-preset', FFMPEG_PRESET,
-        '-c:a', 'aac', '-ar', '48000',
-        '-hls_time', str(SEGMENT_DURATION),
-        '-hls_playlist_type', 'vod',
-        '-hls_segment_filename', str(output_dir / '%03d.ts'),
+        '-i',
+        str(source_path),
+        '-vf',
+        f'scale=-2:{height}',
+        '-c:v',
+        'libx264',
+        '-profile:v',
+        'main',
+        '-crf',
+        '20',
+        '-preset',
+        FFMPEG_PRESET,
+        '-c:a',
+        'aac',
+        '-ar',
+        '48000',
+        '-hls_time',
+        str(SEGMENT_DURATION),
+        '-hls_playlist_type',
+        'vod',
+        '-hls_segment_filename',
+        str(output_dir / '%03d.ts'),
         str(output_dir / 'index.m3u8'),
     ]

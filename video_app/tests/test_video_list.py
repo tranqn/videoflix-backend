@@ -1,4 +1,5 @@
 """Tests for the video list endpoint."""
+
 import datetime
 
 from django.contrib.auth.models import User
@@ -26,7 +27,9 @@ class VideoListTests(APITestCase):
     def make_video(self, title, status, created):
         """Create a video and force a deterministic creation timestamp."""
         video = Video.objects.create(
-            title=title, category='Drama', status=status,
+            title=title,
+            category='Drama',
+            status=status,
             thumbnail=f'thumbnails/{title}.jpg',
         )
         Video.objects.filter(pk=video.pk).update(created_at=created)
@@ -50,9 +53,7 @@ class VideoListTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(self.url)
         self.assertTrue(
-            response.data[0]['thumbnail_url'].startswith(
-                'http://testserver/media/thumbnails/'
-            )
+            response.data[0]['thumbnail_url'].startswith('http://testserver/media/thumbnails/')
         )
 
     def test_list_is_cached(self):

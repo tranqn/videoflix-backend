@@ -1,4 +1,5 @@
 """Authentication that reads the JWT access token from an HttpOnly cookie."""
+
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
