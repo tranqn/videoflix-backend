@@ -2,7 +2,7 @@
 
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.contrib.auth.tokens import default_token_generator
+from django.contrib.auth.tokens import PasswordResetTokenGenerator, default_token_generator
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.encoding import force_bytes, force_str
@@ -16,12 +16,59 @@ from rest_framework_simplejwt.tokens import RefreshToken
 ACTIVATION_PATH = '/pages/auth/activate.html'
 RESET_PATH = '/pages/auth/confirm_password.html'
 
+# Both auth cookies are site-wide; deletion must repeat the exact same path.
+AUTH_COOKIE_PATH = '/'
+
+
+class ActivationTokenGenerator(PasswordResetTokenGenerator):
+    """One-shot token for account activation, in its own namespace.
+
+    Two properties matter here and neither is given by ``default_token_generator``:
+
+    * ``key_salt`` differs from the password-reset generator's, so an activation
+      token can never be replayed against ``/api/password_confirm/`` and a reset
+      token can never activate an account.
+    * ``is_active`` is part of the hash input, so the token stops verifying the
+      moment activation flips the flag — the link is usable exactly once.
+    """
+
+    key_salt = 'auth_app.api.utils.ActivationTokenGenerator'
+
+    def _make_hash_value(self, user, timestamp):
+        """Bind the token to the account's activation state as well."""
+        return f'{super()._make_hash_value(user, timestamp)}{user.is_active}'
+
+
+activation_token_generator = ActivationTokenGenerator()
+
 
 def set_token_cookie(response, key, token):
     """Store a JWT as an HttpOnly cookie on the given response."""
     response.set_cookie(
         key=key,
         value=str(token),
+        path=AUTH_COOKIE_PATH,
+        httponly=True,
+        secure=settings.AUTH_COOKIE_SECURE,
+        samesite=settings.AUTH_COOKIE_SAMESITE,
+    )
+
+
+def delete_token_cookie(response, key):
+    """Expire an auth cookie with the exact attributes it was set with.
+
+    ``HttpResponse.delete_cookie()`` is not usable here: it derives ``secure``
+    from the cookie *name* and never re-sends ``httponly``, so the expiry would
+    carry a different attribute set than the original cookie. A browser that
+    stored a Secure/SameSite=Lax cookie may then simply keep it. Deleting is
+    therefore re-setting the cookie empty and already expired.
+    """
+    response.set_cookie(
+        key=key,
+        value='',
+        max_age=0,
+        expires='Thu, 01 Jan 1970 00:00:00 GMT',
+        path=AUTH_COOKIE_PATH,
         httponly=True,
         secure=settings.AUTH_COOKIE_SECURE,
         samesite=settings.AUTH_COOKIE_SAMESITE,
@@ -84,7 +131,7 @@ def send_activation_email(user_id):
     """Send the account-activation e-mail (enqueued as an RQ job)."""
     user = User.objects.get(pk=user_id)
     link = build_frontend_link(
-        ACTIVATION_PATH, encode_uid(user), default_token_generator.make_token(user)
+        ACTIVATION_PATH, encode_uid(user), activation_token_generator.make_token(user)
     )
     send_html_email(
         'Activate your Videoflix account',
