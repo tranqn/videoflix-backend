@@ -10,6 +10,7 @@ import os
 import sys
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
@@ -124,7 +125,7 @@ CACHES = {
 
 # Background tasks (django-rq). The entrypoint runs `rqworker default`, so heavy
 # jobs (HLS transcoding, e-mail delivery) are enqueued on the 'default' queue.
-RQ_QUEUES = {
+RQ_QUEUES: dict[str, dict[str, Any]] = {
     'default': {
         'HOST': os.environ.get('REDIS_HOST', 'redis'),
         'PORT': os.environ.get('REDIS_PORT', 6379),
