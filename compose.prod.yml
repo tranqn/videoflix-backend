@@ -8,10 +8,27 @@
 #   git clone <backend>          # this repo
 #   git clone <frontend> ../frontend   # the forked Vanilla-JS frontend, as a sibling
 #   cp .env.template .env        # set SECRET_KEY, DEBUG=False, hosts, DB_*, SITE_ADDRESS, EMAIL_*
-#   docker compose -f compose.prod.yml up -d --build
+#   WEB_IMAGE=ghcr.io/tranqn/videoflix-backend:<sha> docker compose -f compose.prod.yml up -d
 #
 # App:   https://<SITE_ADDRESS>/
 # Admin: https://<SITE_ADDRESS>/admin/
+#
+# NO `build:` IN THIS FILE — ON PURPOSE.
+# The application image is built once by CI (.github/workflows/release.yml) and
+# pushed to ghcr.io/tranqn/videoflix-backend:<full-commit-sha>. The server only
+# ever pulls. Because nothing here can build, a missing/typo'd image is a hard
+# error at `up` time instead of a silent rebuild from whatever source tree
+# happens to be on the box — the deployed artifact is then exactly the one CI
+# tested. To build locally, add the overlay that restores the build context:
+#
+#   docker compose -f compose.prod.yml -f compose.build.yml build
+#
+# WEB_IMAGE is the single knob that selects the version of the app. deploy.sh
+# passes the immutable :<sha> tag; the `videoflix-backend:prod` default only
+# exists so a locally built image still runs without extra env.
+#
+# The GHCR package is public, so the server needs no registry credentials at
+# all — one less long-lived secret on a publicly reachable box.
 #
 # The dev docker-compose.yml stays the local-development path and is untouched.
 
@@ -63,10 +80,7 @@ services:
       retries: 5
 
   web:
-    build:
-      context: .
-      dockerfile: backend.Dockerfile
-    image: videoflix-backend:prod
+    image: ${WEB_IMAGE:-videoflix-backend:prod}
     container_name: videoflix_backend
     restart: unless-stopped
     env_file: .env
@@ -113,7 +127,7 @@ services:
   # their RQ worker. `web` handles migrations/collectstatic, and depends_on
   # already waits for a healthy database.
   worker:
-    image: videoflix-backend:prod
+    image: ${WEB_IMAGE:-videoflix-backend:prod}
     container_name: videoflix_worker
     restart: unless-stopped
     env_file: .env
@@ -130,10 +144,14 @@ services:
       redis:
         condition: service_healthy
       web:
-        condition: service_started    # ensures the image is built first
+        # Ordering only. Nothing is built here any more (the image is pulled),
+        # so this is purely "let the container that runs migrate/collectstatic
+        # go first". service_started does not wait for those to finish — the
+        # worker just idles on an empty queue until they do.
+        condition: service_started
 
   media_worker:
-    image: videoflix-backend:prod
+    image: ${WEB_IMAGE:-videoflix-backend:prod}
     container_name: videoflix_media_worker
     restart: unless-stopped
     env_file: .env
@@ -151,7 +169,11 @@ services:
       redis:
         condition: service_healthy
       web:
-        condition: service_started    # ensures the image is built first
+        # Ordering only. Nothing is built here any more (the image is pulled),
+        # so this is purely "let the container that runs migrate/collectstatic
+        # go first". service_started does not wait for those to finish — the
+        # worker just idles on an empty queue until they do.
+        condition: service_started
 
 volumes:
   postgres_data:

@@ -1,0 +1,153 @@
+# Release: build the production image once, in CI, and hand the server nothing
+# but an immutable reference to it.
+#
+#   verify  -> build-push -> dispatch
+#
+# `verify` CALLS .github/workflows/ci.yml (workflow_call) rather than copying
+# its jobs, so there is exactly one definition of "the code is good" and it
+# cannot drift from what pull requests are gated on.
+#
+# The image is tagged with the FULL commit SHA. Deployments must always
+# reference that tag: it is the only one that cannot silently start pointing at
+# different bytes. `latest` is pushed for humans browsing the package page and
+# for `docker pull` convenience — never put it in a deploy command.
+#
+# REGISTRY ACCESS
+# ---------------
+# Push uses the automatic GITHUB_TOKEN with `packages: write`; no PAT, no
+# secret to rotate. The GHCR package is PUBLIC, which means the production VM
+# pulls anonymously and needs NO registry credentials on disk at all. That is
+# the point: a publicly reachable box with no long-lived registry secret on it
+# cannot leak one. (Making the package private later would mean putting a
+# read-only token back on the VM — weigh that trade deliberately.)
+#
+# SECRETS
+# -------
+# UMBRELLA_DISPATCH_TOKEN (repository secret, NOT yet created)
+#   A cross-repo PAT for tranqn/videoflix. GITHUB_TOKEN is scoped to THIS repo
+#   only, so it cannot trigger a workflow in the umbrella; a PAT is the only
+#   mechanism. Needs write access to the umbrella's contents
+#   (fine-grained: Contents read+write on tranqn/videoflix; classic: `repo`).
+#   Until it exists the dispatch step no-ops loudly instead of failing, so
+#   merging this cannot turn `main` red.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Never let two releases race: an older run finishing last would leave `latest`
+# pointing at the older image. Queue instead of cancelling — a cancelled run
+# could abort mid-push.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build-push:
+    name: Build and push image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # The immutable reference every downstream consumer must use.
+      image: ${{ steps.ref.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute the image reference
+        id: ref
+        # ghcr.io requires a lowercase path. `tranqn/videoflix-backend` already
+        # is; deriving it from github.repository keeps this in step with the
+        # `org.opencontainers.image.source` label in backend.Dockerfile, which
+        # is what links the package to this repo.
+        run: |
+          set -euo pipefail
+          repo="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          echo "name=ghcr.io/${repo}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${repo}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend.Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ref.outputs.image }}
+            ${{ steps.ref.outputs.name }}:latest
+          # Same cache the `docker` job in ci.yml warms, so the verified build
+          # and this one are not two independent from-scratch builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image pushed"
+            echo
+            echo '```'
+            echo "${{ steps.ref.outputs.image }}"
+            echo "digest: ${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo
+            echo "Deploy with the SHA tag above, never with \`:latest\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  dispatch:
+    name: Notify umbrella repo
+    needs: build-push
+    runs-on: ubuntu-latest
+    # This job talks to another repository with a PAT; it needs nothing from
+    # this repo's GITHUB_TOKEN.
+    permissions: {}
+    env:
+      # A job-level `if:` cannot read the `secrets` context, so the secret is
+      # mapped into `env` here and the STEP-level `if:` tests that instead.
+      # This is the guard that keeps `main` green while the PAT does not exist.
+      UMBRELLA_DISPATCH_TOKEN: ${{ secrets.UMBRELLA_DISPATCH_TOKEN }}
+      UMBRELLA_REPO: tranqn/videoflix
+      IMAGE_REF: ${{ needs.build-push.outputs.image }}
+    steps:
+      - name: Dispatch backend-release
+        if: env.UMBRELLA_DISPATCH_TOKEN != ''
+        run: |
+          set -euo pipefail
+          payload="$(jq -nc \
+            --arg sha "$GITHUB_SHA" \
+            --arg image "$IMAGE_REF" \
+            '{event_type: "backend-release", client_payload: {sha: $sha, image: $image}}')"
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer ${UMBRELLA_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${UMBRELLA_REPO}/dispatches" \
+            -d "$payload"
+          echo "Dispatched backend-release to ${UMBRELLA_REPO} for ${IMAGE_REF}"
+
+      - name: Skipped (no UMBRELLA_DISPATCH_TOKEN)
+        if: env.UMBRELLA_DISPATCH_TOKEN == ''
+        run: |
+          echo "::notice title=Umbrella dispatch skipped::UMBRELLA_DISPATCH_TOKEN is not set, so ${{ env.UMBRELLA_REPO }} was NOT notified. The image ${{ env.IMAGE_REF }} was still built and pushed; deploy it by hand until the PAT exists."

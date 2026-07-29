@@ -25,7 +25,7 @@ quote-style = "single"
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "core.settings_test"
 python_files = ["test_*.py"]
-testpaths = ["auth_app", "video_app"]
+testpaths = ["auth_app", "video_app", "core"]
 addopts = "-q --strict-markers"
 markers = [
     "ffmpeg: real end-to-end test that shells out to ffmpeg/ffprobe (deselect with -m 'not ffmpeg' where they are not on PATH)",
