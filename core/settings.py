@@ -20,9 +20,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from the local .env file (see .env.template).
 load_dotenv(BASE_DIR / '.env')
 
-# True while running the test suite (``manage.py test``); used to swap in
-# self-contained backends (sqlite/locmem/sync RQ) at the end of this file.
-TESTING = 'test' in sys.argv
+# True while running the test suite; used to swap in self-contained backends
+# (sqlite/locmem/sync RQ) at the end of this file. Set either by ``manage.py
+# test`` (``sys.argv``) or by ``core.settings_test``, which exports
+# DJANGO_TESTING=1 before importing this module (for pytest-django, which
+# never populates ``sys.argv`` with ``'test'``).
+TESTING = 'test' in sys.argv or os.environ.get('DJANGO_TESTING') == '1'
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -40,8 +43,7 @@ if not SECRET_KEY:
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 CSRF_TRUSTED_ORIGINS = [
-    origin for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
-    if origin
+    origin for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if origin
 ]
 
 
@@ -172,12 +174,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Django REST Framework: authenticate via JWT stored in HttpOnly cookies.
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'auth_app.api.authentication.CookieJWTAuthentication',
-    ),
-    'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.IsAuthenticated',
-    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': ('auth_app.api.authentication.CookieJWTAuthentication',),
+    'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAuthenticated',),
 }
 
 # simplejwt: access token outlives the frontend's 20-minute refresh interval so
@@ -199,10 +197,12 @@ AUTH_COOKIE_SAMESITE = 'Lax'
 # credentials, so explicit origins + credentials are required.
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    origin for origin in os.environ.get(
+    origin
+    for origin in os.environ.get(
         'CORS_ALLOWED_ORIGINS',
         'http://127.0.0.1:5500,http://localhost:5500',
-    ).split(',') if origin
+    ).split(',')
+    if origin
 ]
 
 
@@ -225,9 +225,7 @@ FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://127.0.0.1:5500')
 # Production security hardening. Active when DEBUG=False, assuming a
 # TLS-terminating reverse proxy that forwards X-Forwarded-Proto.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_SSL_REDIRECT = (
-    os.environ.get('SECURE_SSL_REDIRECT', str(not DEBUG)) == 'True'
-)
+SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', str(not DEBUG)) == 'True'
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0'))
