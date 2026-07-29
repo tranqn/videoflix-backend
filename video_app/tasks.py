@@ -10,13 +10,13 @@ from rq import Callback
 
 from .api.utils import (
     MEDIA_QUEUE_NAME,
-    RESOLUTION_HEIGHTS,
     VIDEO_JOB_TIMEOUT,
-    build_master_playlist,
+    build_hls_pipeline_arguments,
     generate_thumbnail,
     hls_root,
     invalidate_video_list_cache,
-    transcode_to_hls,
+    probe_video_frame_rate,
+    run_ffmpeg,
 )
 from .models import Video
 
@@ -66,7 +66,6 @@ def process_video(video_id):
     try:
         build_thumbnail(video)
         build_renditions(video)
-        build_master_playlist(video.id)
     except Exception:
         set_status(video, Video.Status.FAILED)
         raise
@@ -83,10 +82,17 @@ def build_thumbnail(video):
 
 
 def build_renditions(video):
-    """Transcode the source video into every offered resolution."""
+    """Transcode the source into every offered resolution in a single pass.
+
+    One ffmpeg invocation decodes the source once and fans it out into all
+    three renditions (see build_hls_pipeline_arguments), instead of the old
+    per-resolution loop that decoded the same source three times.
+    """
     source = Path(video.video_file.path)
-    for resolution in RESOLUTION_HEIGHTS:
-        transcode_to_hls(source, resolution, hls_root(video.id) / resolution)
+    root = hls_root(video.id)
+    root.mkdir(parents=True, exist_ok=True)
+    frame_rate = probe_video_frame_rate(source)
+    run_ffmpeg(build_hls_pipeline_arguments(source, frame_rate, root))
 
 
 def set_status(video, status):
