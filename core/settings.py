@@ -123,16 +123,28 @@ CACHES = {
 }
 
 
-# Background tasks (django-rq). The entrypoint runs `rqworker default`, so heavy
-# jobs (HLS transcoding, e-mail delivery) are enqueued on the 'default' queue.
+# Background tasks (django-rq), split by job duration:
+#
+#   default — fast jobs (activation / password-reset e-mails). Seconds.
+#   media   — HLS transcoding. Minutes to hours per video.
+#
+# One shared queue means a single 90-minute transcode delays every activation
+# e-mail behind it, and a burst of password-reset requests floods the queue the
+# transcoder needs. Whoever changes these names MUST change the workers that
+# consume them in the same commit — an enqueue to a queue nobody pops from fails
+# silently (backend.entrypoint.sh for dev, the worker services in
+# compose.prod.yml for production; video_app/tests/test_queues.py asserts that
+# every queue defined here is consumed by both).
+RQ_QUEUE_DEFAULTS: dict[str, Any] = {
+    'HOST': os.environ.get('REDIS_HOST', 'redis'),
+    'PORT': os.environ.get('REDIS_PORT', 6379),
+    'DB': os.environ.get('REDIS_DB', 0),
+    'DEFAULT_TIMEOUT': 3600,
+    'REDIS_CLIENT_KWARGS': {},
+}
 RQ_QUEUES: dict[str, dict[str, Any]] = {
-    'default': {
-        'HOST': os.environ.get('REDIS_HOST', 'redis'),
-        'PORT': os.environ.get('REDIS_PORT', 6379),
-        'DB': os.environ.get('REDIS_DB', 0),
-        'DEFAULT_TIMEOUT': 3600,
-        'REDIS_CLIENT_KWARGS': {},
-    },
+    'default': dict(RQ_QUEUE_DEFAULTS),
+    'media': dict(RQ_QUEUE_DEFAULTS, DEFAULT_TIMEOUT=86400),
 }
 
 

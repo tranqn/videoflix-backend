@@ -86,6 +86,15 @@ services:
       redis:
         condition: service_healthy
 
+  # Two workers, one per queue. They must together consume every queue in
+  # settings.RQ_QUEUES: an enqueue to a queue nobody pops from raises nothing,
+  # the job simply never runs (video_app/tests/test_queues.py guards this).
+  #
+  # The image's ENTRYPOINT is the DA dev script (backend.entrypoint.sh), which
+  # ignores its arguments — a bare `command:` would still boot gunicorn --reload
+  # here and waste memory. Override the entrypoint so these containers run ONLY
+  # their RQ worker. `web` handles migrations/collectstatic, and depends_on
+  # already waits for a healthy database.
   worker:
     image: videoflix-backend:prod
     container_name: videoflix_worker
@@ -93,12 +102,30 @@ services:
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
-    # The image's ENTRYPOINT is the DA dev script (backend.entrypoint.sh), which
-    # ignores its arguments — a bare `command:` would still boot gunicorn --reload
-    # here and waste memory. Override the entrypoint so this container runs ONLY
-    # the RQ worker. `web` handles migrations/collectstatic, and depends_on
-    # already waits for a healthy database.
+    # Fast jobs only (activation + password-reset e-mails). Deliberately does
+    # NOT list 'media': a 90-minute transcode here would delay every e-mail.
     entrypoint: ["python", "manage.py", "rqworker", "default"]
+    volumes:
+      - videoflix_media:/app/media   # unchanged from the single-worker setup
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started    # ensures the image is built first
+
+  media_worker:
+    image: videoflix-backend:prod
+    container_name: videoflix_media_worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Slow jobs only (HLS transcoding). Scale with
+    # `docker compose -f compose.prod.yml up -d --scale media_worker=N`
+    # (drop container_name first — scaling needs generated names).
+    entrypoint: ["python", "manage.py", "rqworker", "media"]
     volumes:
       - videoflix_media:/app/media   # reads source videos, writes HLS output
     depends_on:

@@ -38,6 +38,11 @@ else:
     print(f"Superuser '{username}' already exists.")
 EOF
 
-python manage.py rqworker default &
+# One worker for both queues is fine locally (production gives 'media' its own
+# worker service, see compose.prod.yml). Queue order = priority: e-mails are
+# drained before the next transcode is picked up. This list MUST cover every
+# queue in settings.RQ_QUEUES — an enqueue to a queue nobody consumes never
+# errors, the job just sits there forever.
+python manage.py rqworker default media &
 
 exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --reload

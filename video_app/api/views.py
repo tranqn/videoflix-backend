@@ -13,9 +13,9 @@ from video_app.models import Video
 from .serializers import VideoListSerializer
 from .utils import (
     RESOLUTION_HEIGHTS,
-    VIDEO_LIST_CACHE_KEY,
     VIDEO_LIST_CACHE_TTL,
     hls_root,
+    video_list_cache_key,
 )
 
 # Segment file names ffmpeg produces (e.g. 000.ts); blocks path traversal.
@@ -28,11 +28,18 @@ class VideoListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Return the cached payload, building it on a cache miss."""
-        payload = cache.get(VIDEO_LIST_CACHE_KEY)
+        """Return the cached payload, building it on a cache miss.
+
+        The key is scoped to the request origin because the payload contains
+        absolute (Host-dependent) thumbnail URLs, and it carries the current
+        invalidation generation, so an entry written from a generation that has
+        meanwhile been bumped is simply never read again.
+        """
+        key = video_list_cache_key(request)
+        payload = cache.get(key)
         if payload is None:
             payload = self.build_payload(request)
-            cache.set(VIDEO_LIST_CACHE_KEY, payload, VIDEO_LIST_CACHE_TTL)
+            cache.set(key, payload, VIDEO_LIST_CACHE_TTL)
         return Response(payload, status=200)
 
     def build_payload(self, request):
