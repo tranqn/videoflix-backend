@@ -140,6 +140,26 @@ class DeployScriptTests(TestCase):
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertIn('latest', result.stderr)
 
+    def test_refuses_an_image_from_anywhere_but_our_own_registry_path(self):
+        """A dispatch payload must not be able to name an arbitrary image.
+
+        The reference reaches this script from a repository_dispatch payload.
+        Anyone able to send one would otherwise pick any image on any registry,
+        and it would be pulled and run by a user in the docker group, which is
+        root-equivalent here. That turns a leaked dispatch token into arbitrary
+        code execution on the box rather than merely a bad release.
+        """
+        for hostile in (
+            'ghcr.io/attacker/malware:abc123',
+            'docker.io/library/alpine:abc123',
+            'ghcr.io/tranqn/videoflix-backend-evil:abc123',
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = self.make_repo(tmp)
+                result = self.run_deploy(repo, hostile)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('only ghcr.io/tranqn/videoflix-backend:', result.stderr)
+
     def test_refuses_when_env_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self.make_repo(tmp, env=None)
@@ -170,7 +190,9 @@ class DeployScriptTests(TestCase):
             caller.mkdir()
             (caller / '.env').write_text(VALID_ENV)
             (caller / 'compose.prod.yml').write_text('services: {}\n')
-            result = self.run_deploy(repo, 'ghcr.io/x/y:abc123', cwd=caller)
+            # A deployable reference on purpose: the only thing this test wants
+            # to fail on is the directory, not the image check above it.
+            result = self.run_deploy(repo, 'ghcr.io/tranqn/videoflix-backend:abc123', cwd=caller)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertIn('.env not found', result.stderr)
             self.assertIn('backend', result.stderr)

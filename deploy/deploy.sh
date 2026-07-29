@@ -81,6 +81,19 @@ if [ "${IMAGE_REF##*:}" = "latest" ] && [ "${ALLOW_MUTABLE_TAG:-0}" != "1" ]; th
   die "refusing to deploy ':latest'. Use the immutable :<full-commit-sha> tag (set ALLOW_MUTABLE_TAG=1 to override)."
 fi
 
+# The image reference arrives from outside this box — ultimately from a
+# repository_dispatch payload. Whoever can send that dispatch would otherwise
+# choose ANY image, and this script would pull it and run it under a user that
+# is in the docker group, which is root-equivalent on this host. So a leaked
+# dispatch token would be arbitrary code execution rather than "a bad version of
+# our own app". Pin the registry path: the only thing deployable here is an
+# image this project's own pipeline built and pushed.
+EXPECTED_IMAGE_PREFIX="${EXPECTED_IMAGE_PREFIX:-ghcr.io/tranqn/videoflix-backend:}"
+case "$IMAGE_REF" in
+  "$EXPECTED_IMAGE_PREFIX"?*) : ;;
+  *) die "refusing to deploy '$IMAGE_REF': only ${EXPECTED_IMAGE_PREFIX}<tag> may be deployed here." ;;
+esac
+
 # ---------------------------------------------------------------------------
 # Preconditions — checked BEFORE the running stack is touched
 # ---------------------------------------------------------------------------
