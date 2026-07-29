@@ -49,6 +49,20 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      # psycopg2==2.9.10 builds from source; needs libpq headers.
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - run: pip install -r requirements-dev.txt
+      - run: mypy .
+
   migrations:
     runs-on: ubuntu-latest
     env:
@@ -127,7 +141,7 @@ jobs:
   ci-ok:
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, test, migrations, security, caddy, docker]
+    needs: [lint, test, typecheck, migrations, security, caddy, docker]
     steps:
       - name: Require all jobs to have succeeded
         run: |

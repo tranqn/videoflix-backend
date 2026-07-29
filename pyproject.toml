@@ -43,6 +43,18 @@ show_missing = true
 skip_covered = true
 fail_under = 93
 
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+exclude = ["migrations/", "tests/"]
+# Retrofitting an untyped codebase: start lenient, catch real errors (wrong
+# attribute, bad return) rather than chasing full annotation coverage.
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.django-stubs]
+django_settings_module = "core.settings_test"
+
 [tool.bandit]
 # Scan the whole tree rather than naming apps, so a new app is covered the day
 # it is created. Tests are excluded because they trip B101 (assert_used) by
