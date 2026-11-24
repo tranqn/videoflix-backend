@@ -17,8 +17,10 @@ from .serializers import (
     RegistrationSerializer,
 )
 from .utils import (
+    activation_token_generator,
     blacklist_refresh_token,
     build_login_response,
+    delete_token_cookie,
     get_user_from_uidb64,
     send_activation_email,
     send_password_reset_email,
@@ -30,6 +32,7 @@ class RegistrationView(APIView):
     """Create a new (inactive) user account and trigger the activation mail."""
 
     permission_classes = [AllowAny]
+    throttle_scope = 'register'
 
     def post(self, request):
         """Validate the form, persist the user and enqueue the e-mail."""
@@ -40,9 +43,14 @@ class RegistrationView(APIView):
         return Response(self.build_payload(user), status=201)
 
     def build_payload(self, user):
-        """Build the registration response (token is informational only)."""
-        token = default_token_generator.make_token(user)
-        return {'user': {'id': user.id, 'email': user.email}, 'token': token}
+        """Build the registration response.
+
+        The activation token is deliberately NOT part of it: handing it to the
+        HTTP caller would let whoever posted the form activate an address they
+        do not own, which is the entire point e-mail verification exists for.
+        The token only ever leaves the system through the activation mail.
+        """
+        return {'user': {'id': user.id, 'email': user.email}}
 
 
 class ActivateView(APIView):
@@ -53,7 +61,7 @@ class ActivateView(APIView):
     def get(self, request, uidb64, token):
         """Validate the token and flip the account to active."""
         user = get_user_from_uidb64(uidb64)
-        if user is None or not default_token_generator.check_token(user, token):
+        if user is None or not activation_token_generator.check_token(user, token):
             return Response({'message': 'Activation failed.'}, status=400)
         user.is_active = True
         user.save(update_fields=['is_active'])
@@ -64,6 +72,7 @@ class LoginView(APIView):
     """Authenticate a user and deliver the JWTs as HttpOnly cookies."""
 
     permission_classes = [AllowAny]
+    throttle_scope = 'login'
 
     def post(self, request):
         """Validate credentials and start an authenticated session."""
@@ -147,8 +156,8 @@ class LogoutView(APIView):
             },
             status=200,
         )
-        response.delete_cookie('access_token')
-        response.delete_cookie('refresh_token')
+        delete_token_cookie(response, 'access_token')
+        delete_token_cookie(response, 'refresh_token')
         return response
 
 
@@ -156,6 +165,9 @@ class PasswordResetView(APIView):
     """Send a reset link without revealing whether the account exists."""
 
     permission_classes = [AllowAny]
+    # Unauthenticated + enqueues an RQ job and an SMTP send per call, so this is
+    # the cheapest amplifier in the API; the tightest bucket belongs here.
+    throttle_scope = 'password_reset'
 
     def post(self, request):
         """Accept an e-mail and (if it matches) enqueue the reset mail."""

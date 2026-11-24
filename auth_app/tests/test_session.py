@@ -2,15 +2,17 @@
 
 from django.contrib.auth.models import User
 from django.urls import reverse
-from rest_framework.test import APITestCase
+
+from auth_app.tests.helpers import ThrottledAPITestCase
 
 VALID_PASSWORD = 'StrongPass123!'
 
 
-class LoginTests(APITestCase):
+class LoginTests(ThrottledAPITestCase):
     """Cover the /api/login/ endpoint."""
 
     def setUp(self):
+        super().setUp()
         self.url = reverse('login')
         self.user = User.objects.create_user(
             username='u@example.com', email='u@example.com', password=VALID_PASSWORD
@@ -41,10 +43,11 @@ class LoginTests(APITestCase):
         self.assertEqual(response.status_code, 403)
 
 
-class SessionTokenTests(APITestCase):
+class SessionTokenTests(ThrottledAPITestCase):
     """Cover token refresh and logout, including blacklisting."""
 
     def setUp(self):
+        super().setUp()
         self.user = User.objects.create_user(
             username='s@example.com', email='s@example.com', password=VALID_PASSWORD
         )

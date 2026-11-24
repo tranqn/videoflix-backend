@@ -3,12 +3,13 @@
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
-from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from rest_framework.test import APITestCase
+
+from auth_app.api.utils import activation_token_generator
+from auth_app.tests.helpers import ThrottledAPITestCase
 
 VALID_PASSWORD = 'StrongPass123!'
 
@@ -18,10 +19,11 @@ def run_inline(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-class RegistrationTests(APITestCase):
+class RegistrationTests(ThrottledAPITestCase):
     """Cover the /api/register/ endpoint."""
 
     def setUp(self):
+        super().setUp()
         self.url = reverse('register')
 
     @patch('django_rq.enqueue', side_effect=run_inline)
@@ -63,10 +65,11 @@ class RegistrationTests(APITestCase):
         self.assertFalse(User.objects.filter(email='mismatch@example.com').exists())
 
 
-class ActivationTests(APITestCase):
+class ActivationTests(ThrottledAPITestCase):
     """Cover the /api/activate/<uidb64>/<token>/ endpoint."""
 
     def setUp(self):
+        super().setUp()
         self.user = User.objects.create_user(
             username='a@example.com',
             email='a@example.com',
@@ -76,7 +79,7 @@ class ActivationTests(APITestCase):
         self.uidb64 = urlsafe_base64_encode(force_bytes(self.user.pk))
 
     def test_activation_with_valid_token_activates_account(self):
-        token = default_token_generator.make_token(self.user)
+        token = activation_token_generator.make_token(self.user)
         response = self.client.get(reverse('activate', args=[self.uidb64, token]))
         self.assertEqual(response.status_code, 200)
         self.user.refresh_from_db()

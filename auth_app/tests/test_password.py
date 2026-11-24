@@ -8,7 +8,8 @@ from django.core import mail
 from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from rest_framework.test import APITestCase
+
+from auth_app.tests.helpers import ThrottledAPITestCase
 
 VALID_PASSWORD = 'StrongPass123!'
 NEW_PASSWORD = 'BrandNew456!'
@@ -19,10 +20,11 @@ def run_inline(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-class PasswordResetRequestTests(APITestCase):
+class PasswordResetRequestTests(ThrottledAPITestCase):
     """Cover the /api/password_reset/ endpoint."""
 
     def setUp(self):
+        super().setUp()
         self.url = reverse('password_reset')
         self.user = User.objects.create_user(
             username='r@example.com', email='r@example.com', password=VALID_PASSWORD
@@ -41,10 +43,11 @@ class PasswordResetRequestTests(APITestCase):
         self.assertEqual(len(mail.outbox), 0)
 
 
-class PasswordConfirmTests(APITestCase):
+class PasswordConfirmTests(ThrottledAPITestCase):
     """Cover the /api/password_confirm/<uidb64>/<token>/ endpoint."""
 
     def setUp(self):
+        super().setUp()
         self.user = User.objects.create_user(
             username='c@example.com', email='c@example.com', password=VALID_PASSWORD
         )

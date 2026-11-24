@@ -174,13 +174,40 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 # Django REST Framework: authenticate via JWT stored in HttpOnly cookies.
+#
+# Throttling: ScopedRateThrottle rather than Anon/User defaults or bespoke
+# classes — the three endpoints that need limits want three *different* rates,
+# and a scope is one attribute on the view plus one line here, with no new code
+# to test. Views without a `throttle_scope` are unaffected.
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ('auth_app.api.authentication.CookieJWTAuthentication',),
     'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAuthenticated',),
+    'DEFAULT_THROTTLE_CLASSES': ('rest_framework.throttling.ScopedRateThrottle',),
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '10/min',
+        'register': '5/hour',
+        'password_reset': '3/hour',
+    },
+    # Anonymous callers are bucketed by IP. With NUM_PROXIES unset, DRF trusts
+    # the *whole* X-Forwarded-For header, which the client controls — an
+    # attacker would get a fresh bucket per forged header and the limits above
+    # would be decorative. `1` = exactly one trusted reverse proxy (Caddy, see
+    # compose.prod.yml), so DRF reads the last XFF entry, the one Caddy itself
+    # appended. Raise this if you ever put a CDN in front of Caddy; with no
+    # proxy at all (local runserver) it falls back to REMOTE_ADDR.
+    'NUM_PROXIES': int(os.environ.get('NUM_PROXIES', '1')),
 }
 
 # simplejwt: access token outlives the frontend's 20-minute refresh interval so
 # long video streams never 401 mid-playback. Refresh tokens rotate + blacklist.
+#
+# Known tradeoff: logout blacklists the refresh token and clears both cookies,
+# but a *copy* of the access token taken before logout stays valid for the rest
+# of its 60-minute lifetime — simplejwt does not blacklist access tokens. This
+# value is held at 60 minutes on purpose: the frontend only renews on a fixed
+# 20-minute timer that runs on the video-list page, so a shorter lifetime would
+# expire tokens with nothing to renew them and break playback mid-stream. Drop
+# it (5-15 minutes) as soon as the client refreshes on a 401 instead.
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
@@ -191,6 +218,16 @@ SIMPLE_JWT = {
 
 # HttpOnly auth cookies. 'secure' only over HTTPS, so disabled in local DEBUG.
 AUTH_COOKIE_SECURE = not DEBUG
+
+# SECURITY: this line is the CSRF defence for the whole API, not a preference.
+# DRF's APIView.as_view() is csrf_exempt, and CsrfViewMiddleware only enforces
+# for SessionAuthentication — we authenticate from a cookie-borne JWT, so no
+# CSRF token is ever checked on any endpoint. What stops evil.com from POSTing
+# to /api/ with the victim's cookies attached is solely SameSite=Lax.
+# Switching this to 'None' (the usual fix when the frontend moves to a
+# different site) silently makes every state-changing endpoint forgeable, so
+# that change MUST come together with real CSRF tokens or an Origin check.
+# test_csrf_posture.py asserts this value so the dependency fails loudly.
 AUTH_COOKIE_SAMESITE = 'Lax'
 
 
