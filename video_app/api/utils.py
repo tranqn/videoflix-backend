@@ -11,15 +11,19 @@ from django.core.cache import cache
 
 # Offered resolutions mapped to their target height (width is auto, kept even).
 RESOLUTION_HEIGHTS = {'480p': 480, '720p': 720, '1080p': 1080}
-# Average bitrate (bit/s) + 16:9 frame size advertised per rendition in the
-# master playlist, so an HLS player can pick the variant that fits its bandwidth.
+# VBV cap (bit/s) enforced per rendition via -maxrate/-bufsize, so the number
+# hls.js is told to expect (baked into the ffmpeg-generated master playlist)
+# is a hard ceiling the encode cannot exceed, not just whatever -crf produces
+# for a given source.
 RENDITION_VARIANTS = {
-    '480p': (1_400_000, '854x480'),
-    '720p': (2_800_000, '1280x720'),
-    '1080p': (5_000_000, '1920x1080'),
+    '480p': 1_400_000,
+    '720p': 2_800_000,
+    '1080p': 5_000_000,
 }
 SEGMENT_DURATION = 6
-THUMBNAIL_TIMESTAMP = '00:00:05'
+# Preferred thumbnail timestamp (seconds). Clips shorter than this fall back
+# to their midpoint -- see thumbnail_timestamp().
+THUMBNAIL_TIMESTAMP_SECONDS = 5.0
 # On small hosts set FFMPEG_PRESET=ultrafast in .env to halve transcode
 # time at the cost of slightly larger segment files.
 FFMPEG_PRESET = os.environ.get('FFMPEG_PRESET', 'veryfast')
@@ -83,17 +87,88 @@ def hls_root(video_id):
 
 
 def run_ffmpeg(arguments):
-    """Run ffmpeg with the given arguments, raising on a non-zero exit."""
-    subprocess.run(['ffmpeg', '-y', *arguments], check=True, capture_output=True)
+    """Run ffmpeg with the given arguments, raising with its stderr tail on failure.
+
+    ``CalledProcessError.__str__`` is just the exit code -- exactly what RQ's
+    failure callback and dashboard show -- while the actual reason (bad filter
+    graph, unsupported codec, a seek past EOF) sits unread on ``exc.stderr``.
+    Re-raise with the last lines of stderr folded into the message so a failed
+    transcode is diagnosable without reproducing it locally.
+    """
+    try:
+        subprocess.run(['ffmpeg', '-y', *arguments], check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b'').decode(errors='replace').strip()
+        tail = '\n'.join(stderr.splitlines()[-20:])
+        raise RuntimeError(f'ffmpeg exited with status {exc.returncode}:\n{tail}') from exc
+
+
+def probe_video_duration(source_path):
+    """Return the source video's duration in seconds via ffprobe."""
+    output = subprocess.run(
+        [
+            'ffprobe',
+            '-v',
+            'error',
+            '-show_entries',
+            'format=duration',
+            '-of',
+            'default=noprint_wrappers=1:nokey=1',
+            str(source_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return float(output)
+
+
+def probe_video_frame_rate(source_path):
+    """Return the source video's frame rate (frames/second) via ffprobe."""
+    output = subprocess.run(
+        [
+            'ffprobe',
+            '-v',
+            'error',
+            '-select_streams',
+            'v:0',
+            '-show_entries',
+            'stream=r_frame_rate',
+            '-of',
+            'default=noprint_wrappers=1:nokey=1',
+            str(source_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    numerator, _, denominator = output.partition('/')
+    return float(numerator) / float(denominator) if denominator else float(numerator)
+
+
+def thumbnail_timestamp(duration):
+    """Pick an in-bounds seek target (seconds) for the still-frame thumbnail.
+
+    Historically fixed at THUMBNAIL_TIMESTAMP_SECONDS; a clip shorter than
+    that seeks past EOF, so ffmpeg writes no frame and exits non-zero, failing
+    the whole processing job even though the transcode itself would have
+    succeeded. Keep the original mark for longer videos, but fall back to the
+    midpoint of short ones so a valid frame always exists to grab.
+    """
+    if duration <= 0:
+        return 0.0
+    return min(THUMBNAIL_TIMESTAMP_SECONDS, duration / 2)
 
 
 def generate_thumbnail(source_path, destination_path):
     """Grab a single still frame to use as the video thumbnail."""
     destination_path.parent.mkdir(parents=True, exist_ok=True)
+    duration = probe_video_duration(source_path)
+    timestamp = thumbnail_timestamp(duration)
     run_ffmpeg(
         [
             '-ss',
-            THUMBNAIL_TIMESTAMP,
+            f'{timestamp:.3f}',
             '-i',
             str(source_path),
             '-frames:v',
@@ -105,48 +180,79 @@ def generate_thumbnail(source_path, destination_path):
     )
 
 
-def transcode_to_hls(source_path, resolution, output_dir):
-    """Transcode the source into an HLS rendition at the given resolution."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(build_hls_arguments(source_path, RESOLUTION_HEIGHTS[resolution], output_dir))
+def build_hls_pipeline_arguments(source_path, frame_rate, output_root):
+    """Build the ffmpeg arguments for one single-pass, multi-rendition HLS encode.
 
+    Decodes ``source_path`` once and fans it out with a ``split`` filter into
+    one scaled libx264 encode per rendition, instead of the old approach of
+    invoking ffmpeg once per resolution (three decodes of the same source).
+    ``-var_stream_map`` also drives ffmpeg's own HLS muxer into writing the
+    master playlist (``master_pl_name``), so a hand-rolled one is no longer
+    needed -- and its BANDWIDTH/RESOLUTION values reflect what was actually
+    encoded, rather than a static estimate.
 
-def build_master_playlist(video_id):
-    """Write the master playlist that references every HLS rendition."""
-    lines = ['#EXTM3U', '#EXT-X-VERSION:3']
-    for resolution in RESOLUTION_HEIGHTS:
-        bandwidth, frame_size = RENDITION_VARIANTS[resolution]
-        lines.append(f'#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={frame_size}')
-        lines.append(f'{resolution}/index.m3u8')
-    master_path = hls_root(video_id) / 'master.m3u8'
-    master_path.parent.mkdir(parents=True, exist_ok=True)
-    master_path.write_text('\n'.join(lines) + '\n')
+    Every rendition shares a GOP of exactly SEGMENT_DURATION seconds
+    (``-g``/``-keyint_min`` derived from ``frame_rate``) with scene-cut
+    detection disabled (``-sc_threshold 0``), so segment N starts on the same
+    source frame in every rendition -- required for a clean quality switch
+    mid-playback. ``-maxrate``/``-bufsize`` per rendition cap the encode at
+    the bitrate advertised in RENDITION_VARIANTS, since without a VBV cap
+    ``-crf`` alone can produce a stream well past what the player was told to
+    expect.
+    """
+    resolutions = list(RESOLUTION_HEIGHTS)
+    frames_per_gop = max(1, round(frame_rate * SEGMENT_DURATION))
 
+    split_labels = ''.join(f'[v{i}]' for i in range(len(resolutions)))
+    filter_stages = [f'[0:v]split={len(resolutions)}{split_labels}']
+    for i, resolution in enumerate(resolutions):
+        height = RESOLUTION_HEIGHTS[resolution]
+        filter_stages.append(f'[v{i}]scale=-2:{height},format=yuv420p[scaled{i}]')
+    filter_complex = '; '.join(filter_stages)
 
-def build_hls_arguments(source_path, height, output_dir):
-    """Build the ffmpeg argument list for one HLS rendition."""
-    return [
-        '-i',
-        str(source_path),
-        '-vf',
-        f'scale=-2:{height}',
-        '-c:v',
-        'libx264',
-        '-profile:v',
-        'main',
-        '-crf',
-        '20',
-        '-preset',
-        FFMPEG_PRESET,
-        '-c:a',
-        'aac',
-        '-ar',
-        '48000',
+    arguments = ['-i', str(source_path), '-filter_complex', filter_complex]
+    for i, resolution in enumerate(resolutions):
+        maxrate = RENDITION_VARIANTS[resolution]
+        arguments += [
+            '-map',
+            f'[scaled{i}]',
+            f'-c:v:{i}',
+            'libx264',
+            f'-profile:v:{i}',
+            'main',
+            f'-crf:v:{i}',
+            '20',
+            f'-preset:{i}',
+            FFMPEG_PRESET,
+            f'-maxrate:v:{i}',
+            str(maxrate),
+            f'-bufsize:v:{i}',
+            str(maxrate * 2),
+            f'-g:{i}',
+            str(frames_per_gop),
+            f'-keyint_min:{i}',
+            str(frames_per_gop),
+            f'-sc_threshold:{i}',
+            '0',
+        ]
+    for _ in resolutions:
+        arguments += ['-map', 'a:0']
+    arguments += ['-c:a', 'aac', '-ar', '48000']
+
+    var_stream_map = ' '.join(
+        f'v:{i},a:{i},name:{resolution}' for i, resolution in enumerate(resolutions)
+    )
+    arguments += [
+        '-var_stream_map',
+        var_stream_map,
         '-hls_time',
         str(SEGMENT_DURATION),
         '-hls_playlist_type',
         'vod',
+        '-master_pl_name',
+        'master.m3u8',
         '-hls_segment_filename',
-        str(output_dir / '%03d.ts'),
-        str(output_dir / 'index.m3u8'),
+        str(output_root / '%v' / '%03d.ts'),
+        str(output_root / '%v' / 'index.m3u8'),
     ]
+    return arguments
