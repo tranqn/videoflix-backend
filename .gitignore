@@ -30,3 +30,9 @@ code-atlas.html
 
 # OS / editor
 .DS_Store
+
+# Re-include .claude/ in this repo: the user's global gitignore has a bare
+# `.claude` entry (excludes the dir itself), so negating only its contents
+# would not be enough - the directory match has to be undone too.
+!.claude/
+!.claude/**

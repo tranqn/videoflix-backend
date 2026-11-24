@@ -93,7 +93,10 @@ class LoginView(APIView):
 class CookieTokenRefreshView(TokenRefreshView):
     """Refresh the access token using the refresh-token cookie."""
 
-    permission_classes = [AllowAny]
+    # simplejwt ships no type information, so mypy infers TokenViewBase's
+    # `permission_classes = ()` as the empty-tuple type and rejects any
+    # override. The narrow base annotation is the defect, not this line.
+    permission_classes = [AllowAny]  # type: ignore[assignment]
 
     def post(self, request, *args, **kwargs):
         """Read the refresh cookie and rotate the tokens."""

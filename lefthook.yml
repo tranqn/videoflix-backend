@@ -1,0 +1,36 @@
+# lefthook.yml — git-hook quality guards (Python/Django translation of the
+# pnpm template). Installed via pip (see requirements-dev.txt), not pnpm.
+# Uses the repo's own .venv/bin/ executables so it works without an
+# activated venv. Arm with `lefthook install` when ready (not run by CI setup).
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      glob: "*.py"
+      run: .venv/bin/ruff format {staged_files}
+      stage_fixed: true
+    - name: lint
+      glob: "*.py"
+      run: .venv/bin/ruff check --fix {staged_files}
+      stage_fixed: true
+    - name: secrets
+      # Runs only if gitleaks is installed (brew install gitleaks); never blocks otherwise.
+      run: sh -c 'command -v gitleaks >/dev/null 2>&1 && gitleaks protect --staged --no-banner || echo "gitleaks not installed - skipping secret scan"'
+
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      # Standard Conventional Commits: type(scope)!: subject. Matches this
+      # repo's existing history (feat/fix/perf/style/ci/build/test/...).
+      run: >
+        sh -c 'grep -qE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_.-]+\))?!?: " "$1"
+        || { echo "commit-msg: not a Conventional Commit (expected type(scope)?!: subject, e.g. feat(video): ..., fix:, ci:, build:, etc.)"; exit 1; }' -- {1}
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: typecheck
+      run: .venv/bin/mypy .
+    - name: test
+      run: .venv/bin/pytest

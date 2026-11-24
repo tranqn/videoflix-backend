@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.12'
+  # Defaults so a future flip of core.settings' fallbacks can't silently break
+  # CI: DEBUG=False + empty SECRET_KEY raises ImproperlyConfigured on import.
+  SECRET_KEY: ci-placeholder-secret-key-not-used-in-production
+  DEBUG: 'True'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check --output-format=github .
+      - run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      # psycopg2==2.9.10 builds from source; needs libpq headers.
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - run: pip install -r requirements-dev.txt
+      - run: pytest --cov --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      # psycopg2==2.9.10 builds from source; needs libpq headers.
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - run: pip install -r requirements-dev.txt
+      - run: mypy .
+
+  migrations:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_SETTINGS_MODULE: core.settings_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - run: pip install -r requirements-dev.txt
+      - run: python manage.py makemigrations --check --dry-run
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      # Config (including which dirs are skipped) lives in pyproject.toml so it
+      # is the same locally and here.
+      - name: bandit
+        run: bandit -c pyproject.toml -r . -ll
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Pinned like every other dependency in this repo: an unpinned scanner
+      # turns a green pipeline red on someone else's release schedule.
+      - name: semgrep
+        run: |
+          pip install semgrep==1.172.0
+          semgrep --config p/python --config p/django --config p/secrets --error .
+
+  caddy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate Caddyfile
+        run: |
+          docker run --rm \
+            -e SITE_ADDRESS=example.com \
+            -v "${{ github.workspace }}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend.Dockerfile
+          push: false
+          load: true
+          tags: videoflix-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Django deploy check
+        run: |
+          docker run --rm --entrypoint python \
+            -e SECRET_KEY=ci-deploy-check-secret-key-not-used-in-production \
+            -e DEBUG=False \
+            -e ALLOWED_HOSTS=localhost \
+            videoflix-backend:ci manage.py check --deploy --fail-level ERROR
+
+  ci-ok:
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, test, typecheck, migrations, security, caddy, docker]
+    steps:
+      - name: Require all jobs to have succeeded
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "One or more required jobs did not succeed."
+            exit 1
+          fi
+          echo "All required jobs passed."
