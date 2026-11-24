@@ -2,8 +2,9 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  # Deliberately no `push: branches: [main]`. release.yml runs on that push and
+  # gates itself on this workflow via workflow_call, so keeping a push trigger
+  # here would run the whole suite twice for every merge.
   workflow_call:
 
 permissions:

@@ -1,0 +1,25 @@
+# Build overlay for compose.prod.yml — LOCAL USE ONLY.
+#
+# compose.prod.yml deliberately has no `build:` key, so the production server
+# physically cannot build the application image: it can only pull the exact
+# artifact CI produced. That is the property worth protecting, and it is worth
+# protecting by construction rather than by discipline.
+#
+# This overlay restores the build context for the cases where building really
+# is the point — reproducing the production stack on a laptop, or debugging the
+# Dockerfile against the production entrypoint:
+#
+#   docker compose -f compose.prod.yml -f compose.build.yml build
+#   docker compose -f compose.prod.yml -f compose.build.yml up -d --build
+#
+# Only `web` gets a build context. `worker` and `media_worker` run the same
+# image and simply reuse whatever tag WEB_IMAGE resolves to, so building them
+# separately would just rebuild the same layers under a second name.
+#
+# Do NOT copy this file to the server, and do not reference it from deploy.sh.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
