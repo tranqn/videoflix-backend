@@ -7,12 +7,15 @@ from django.contrib import admin
 from django.urls import URLPattern, URLResolver, include, path, re_path
 from django.views.static import serve
 
+from core.views import HealthView
+
 # Annotated because the list starts out holding only URLResolvers (every entry
 # is an include()); without it mypy locks the element type in and rejects the
 # plain URLPattern appended below.
 urlpatterns: list[URLPattern | URLResolver] = [
     path('admin/', admin.site.urls),
     path('django-rq/', include('django_rq.urls')),
+    path('api/health/', HealthView.as_view(), name='health'),
     path('api/', include('auth_app.api.urls')),
     path('api/', include('video_app.api.urls')),
 ]

@@ -26,7 +26,23 @@ src/{{ project_name }}/settings/local.py
 src/node_modules
 web/media
 web/static/CACHE
+media
+static
 stats
 Dockerfile
 .env
 db.sqlite3
+.github/
+# Anchored (leading /): the repo-root docs (lehrbuch.html, code-atlas.html) are
+# multi-hundred-KB build artifacts, not app files. An unanchored `*.html` would
+# also match templates/emails/*.html, which Django renders at runtime for the
+# activation/reset e-mails -- those must stay in the image.
+/*.html
+docs/
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+coverage.xml
+htmlcov

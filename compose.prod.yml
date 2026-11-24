@@ -17,7 +17,7 @@
 
 services:
   caddy:
-    image: caddy:2
+    image: caddy:2.11
     container_name: videoflix_caddy
     restart: unless-stopped
     ports:
@@ -77,9 +77,26 @@ services:
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-3}
     volumes:
       - videoflix_media:/app/media
-      - videoflix_static:/app/static
     expose:
       - "8000"                   # reached only via Caddy, not published to the host
+    healthcheck:
+      # Alpine has busybox wget, not curl. ALLOWED_HOSTS in production is
+      # domain-only (SITE_ADDRESS), so an unqualified request gets a Django
+      # DisallowedHost 400 -- the Host header must match. start_period covers
+      # migrate + collectstatic on boot before failures count against retries.
+      test:
+        [
+          "CMD",
+          "wget",
+          "--spider",
+          "-q",
+          "--header=Host: ${SITE_ADDRESS}",
+          "http://127.0.0.1:8000/api/health/",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       db:
         condition: service_healthy
@@ -140,6 +157,5 @@ volumes:
   postgres_data:
   redis_data:
   videoflix_media:
-  videoflix_static:
   caddy_data:
   caddy_config:

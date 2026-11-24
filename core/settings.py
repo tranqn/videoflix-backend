@@ -282,6 +282,55 @@ SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0'))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
 SECURE_HSTS_PRELOAD = SECURE_HSTS_SECONDS > 0
 
+# The container healthcheck (compose.prod.yml) speaks plain HTTP with no TLS
+# terminator in front of it, so SECURE_SSL_REDIRECT would otherwise answer it
+# with a 301 and the container would never report healthy. SecurityMiddleware
+# matches these patterns against request.path with its leading slash stripped
+# (see django.middleware.security.SecurityMiddleware.process_request), so the
+# pattern below is anchored against 'api/health/', not '/api/health/'.
+SECURE_REDIRECT_EXEMPT = [r'^api/health/$']
+
+
+# Structured (JSON-ish) logging to stdout: Docker captures stdout, so there is
+# no file handler and nothing to rotate. Level is configurable per deploy
+# (e.g. DEBUG while chasing an incident) without a code change; INFO by
+# default. Only stdlib logging is used — no extra dependency for this.
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'json': {
+            'format': (
+                '{"time": "%(asctime)s", "level": "%(levelname)s", '
+                '"logger": "%(name)s", "message": "%(message)s"}'
+            ),
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'json',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': LOG_LEVEL,
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': LOG_LEVEL,
+            'propagate': False,
+        },
+        'rq.worker': {
+            'handlers': ['console'],
+            'level': LOG_LEVEL,
+            'propagate': False,
+        },
+    },
+}
+
 
 # Test runner: use self-contained backends so the suite needs no external
 # services (PostgreSQL/Redis/SMTP) and RQ jobs execute synchronously.
