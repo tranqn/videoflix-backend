@@ -1,5 +1,7 @@
 """Root URL configuration for the Videoflix backend."""
 
+from pathlib import Path
+
 from django.conf import settings
 from django.contrib import admin
 from django.urls import URLPattern, URLResolver, include, path, re_path
@@ -22,6 +24,11 @@ urlpatterns += [
     re_path(
         r'^media/thumbnails/(?P<path>.*)$',
         serve,
-        {'document_root': settings.MEDIA_ROOT / 'thumbnails'},
+        # Path() rather than `settings.MEDIA_ROOT / ...`: this is evaluated at
+        # import time, and a test that overrides MEDIA_ROOT with a plain string
+        # (tempfile.mkdtemp() returns one) made importing this module raise
+        # TypeError. The suite only passed because another test imported it
+        # first while the setting was still a Path.
+        {'document_root': Path(settings.MEDIA_ROOT) / 'thumbnails'},
     ),
 ]

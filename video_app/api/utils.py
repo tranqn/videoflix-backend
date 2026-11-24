@@ -1,10 +1,13 @@
 """FFmpeg helpers and shared constants for the video app."""
 
+import hashlib
 import os
 import subprocess
+import uuid
 from pathlib import Path
 
 from django.conf import settings
+from django.core.cache import cache
 
 # Offered resolutions mapped to their target height (width is auto, kept even).
 RESOLUTION_HEIGHTS = {'480p': 480, '720p': 720, '1080p': 1080}
@@ -21,9 +24,57 @@ THUMBNAIL_TIMESTAMP = '00:00:05'
 # time at the cost of slightly larger segment files.
 FFMPEG_PRESET = os.environ.get('FFMPEG_PRESET', 'veryfast')
 
-# Cache key for the shared (same for every user) video dashboard list.
+# Cache for the video dashboard list. The payload is the same for every *user*,
+# but NOT for every *origin*: the serializer embeds absolute thumbnail URLs built
+# from the requesting Host (the frontend runs on another origin than the API, so
+# a relative URL would resolve against the frontend and 404). A single global key
+# would freeze whichever Host happened to miss the cache into the payload every
+# other caller gets for the whole TTL, so the key is scoped per origin
+# (scheme + host). Django validates Host against ALLOWED_HOSTS before we ever see
+# it, so the key space stays bounded and cannot be inflated by a forged header.
+#
+# Per-origin keys cannot be dropped with a single cache.delete(), and the Django
+# cache API has no key scan (LocMemCache least of all), so every key carries a
+# generation token: replacing the token makes every origin's entry unreachable at
+# once, and the orphans expire on their own TTL. The token is a random UUID, not
+# a counter — if it is ever lost (Redis eviction/flush/restart) the replacement
+# is a value that has never been used, so no previously cached payload can be
+# resurrected.
 VIDEO_LIST_CACHE_KEY = 'video_list'
+VIDEO_LIST_CACHE_GENERATION_KEY = 'video_list_generation'
 VIDEO_LIST_CACHE_TTL = 300
+
+# Queue names. Transcoding is minutes-to-hours of ffmpeg; activation and
+# password-reset e-mails must not queue behind it, so they stay on 'default'
+# and media jobs get their own queue with its own worker.
+MEDIA_QUEUE_NAME = 'media'
+# 24h ceiling: long HLS batches can run overnight on modest hardware. Large
+# finite, not -1/infinite — a hung job must eventually fail and be swept.
+VIDEO_JOB_TIMEOUT = 86400
+# A video that has been PROCESSING for longer than this is assumed dead (worker
+# OOM-killed or container restarted mid-transcode); see sweep_stuck_videos.
+STUCK_PROCESSING_HOURS = 24
+
+
+def video_list_cache_generation():
+    """Return the current video list cache generation, seeding one if unset."""
+    generation = cache.get(VIDEO_LIST_CACHE_GENERATION_KEY)
+    if generation is None:
+        generation = uuid.uuid4().hex
+        cache.set(VIDEO_LIST_CACHE_GENERATION_KEY, generation, None)
+    return generation
+
+
+def video_list_cache_key(request):
+    """Return the video list cache key for the origin (scheme + host) of ``request``."""
+    origin = f'{request.scheme}://{request.get_host()}'
+    digest = hashlib.sha256(origin.encode()).hexdigest()[:32]
+    return f'{VIDEO_LIST_CACHE_KEY}:{video_list_cache_generation()}:{digest}'
+
+
+def invalidate_video_list_cache():
+    """Drop every origin's cached video list by rotating the generation token."""
+    cache.set(VIDEO_LIST_CACHE_GENERATION_KEY, uuid.uuid4().hex, None)
 
 
 def hls_root(video_id):
