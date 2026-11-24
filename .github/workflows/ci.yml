@@ -124,6 +124,56 @@ jobs:
             -v "${{ github.workspace }}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
+      # `validate` only proves the file parses. The two properties the HLS
+      # offload actually depends on are invisible in the Caddyfile source
+      # because the adapter REORDERS directives, so they are asserted against
+      # the generated JSON — the thing Caddy really runs.
+      - name: Adapt Caddyfile to JSON
+        run: |
+          docker run --rm \
+            -e SITE_ADDRESS=example.com \
+            -v "${{ github.workspace }}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2 caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile \
+            2>/dev/null > adapted.json
+
+      # @backend matches /api/*, which covers every HLS URL. `handle` sorts
+      # BEFORE `route` in the adapter's directive order, so a top-level
+      # `route @hls` written above @backend is emitted below it: the API proxy
+      # wins, every segment goes back through Gunicorn, and nothing anywhere
+      # reports an error. Only the adapted output shows it.
+      - name: The HLS route must be ordered before the API proxy
+        run: |
+          jq -e '
+            def has_match(f):
+              (.match? | type) == "array"
+              and any(.match[]; (type == "object") and f);
+            def hls_at: map(has_match(.path_regexp?.name? == "hls")) | index(true);
+            def api_at: map(has_match((.path? // []) | any(. == "/api/*"))) | index(true);
+            [ .. | objects | select(has("routes")) | .routes
+              | select((hls_at != null) and (api_at != null))
+              | (hls_at < api_at) ]
+            | (length > 0) and all
+          ' adapted.json
+
+      # Inside a handle block the adapter sorts `uri` before `forward_auth`.
+      # Drop the inner `route` and the auth subrequest starts reporting the
+      # rewritten path in X-Forwarded-Uri — an entitlement check in Django
+      # would then authorize a path the client never asked for.
+      - name: forward_auth must run before the path rewrite
+        run: |
+          jq -e '
+            def is_hls:
+              (.match? | type) == "array"
+              and any(.match[]; (type == "object") and (.path_regexp?.name? == "hls"));
+            def chain: [ .. | objects | select(has("handler"))
+              | .handler + ":" + ((.rewrite?.uri? // .strip_path_prefix? // "") | tostring) ];
+            [ .. | objects | select(is_hls) | chain
+              | (index("reverse_proxy:/internal/hls-auth/")) as $auth
+              | (index("rewrite:/api/video")) as $strip
+              | ($auth != null) and ($strip != null) and ($auth < $strip) ]
+            | (length > 0) and all
+          ' adapted.json
+
   docker:
     runs-on: ubuntu-latest
     steps:

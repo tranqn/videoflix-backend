@@ -97,6 +97,35 @@ class ComposeIsPullOnlyTests(TestCase):
         self.assertNotIn('ensures the image is built first', PROD_COMPOSE.read_text())
 
 
+class CaddyMediaMountTests(TestCase):
+    """Caddy serves HLS off the media volume; the mount is part of that contract."""
+
+    def caddy_volumes(self):
+        block = service_blocks(PROD_COMPOSE)['caddy']
+        return [line.strip().lstrip('- ').split('#')[0].strip() for line in block]
+
+    def test_media_volume_is_mounted_read_only(self):
+        # Without :ro, the one process reachable from the internet could rewrite
+        # the segments every other user then plays.
+        self.assertIn('videoflix_media:/srv/media:ro', self.caddy_volumes())
+
+    def test_media_is_not_mounted_writable_by_any_alias(self):
+        writable = [
+            volume
+            for volume in self.caddy_volumes()
+            if 'videoflix_media' in volume and not volume.endswith(':ro')
+        ]
+        self.assertEqual(writable, [], 'caddy must never hold a writable media mount')
+
+    def test_deploy_asserts_hls_is_denied_at_the_edge(self):
+        # A 200 there means forward_auth failed open: Caddy would be handing out
+        # video to anyone. That must fail the deploy, not merely be logged.
+        script = DEPLOY_SCRIPT.read_text()
+        self.assertIn('assert_hls_denied_at_the_edge', script)
+        self.assertIn('/api/video/1/master.m3u8', script)
+        self.assertRegex(script, r'POST_HEALTH_ASSERTIONS=\([^)]*assert_hls_denied_at_the_edge')
+
+
 class DeployScriptTests(TestCase):
     """deploy.sh must refuse to run before it can damage the running stack."""
 
